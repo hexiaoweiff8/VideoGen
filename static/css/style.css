@@ -1,0 +1,747 @@
+/* ==================== 全局样式 ==================== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --primary-color: #4a90e2;
+    --success-color: #52c41a;
+    --error-color: #ff4d4f;
+    --warning-color: #faad14;
+    --bg-color: #f5f7fa;
+    --card-bg: #ffffff;
+    --text-primary: #2c3e50;
+    --text-secondary: #7f8c8d;
+    --border-color: #e1e8ed;
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 
+                 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: var(--text-primary);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* ==================== 头部 ==================== */
+header {
+    text-align: center;
+    color: white;
+    margin-bottom: 30px;
+}
+
+header h1 {
+    font-size: 2.5em;
+    margin-bottom: 10px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.subtitle {
+    font-size: 1.1em;
+    opacity: 0.9;
+}
+
+/* ==================== 步骤指示器 ==================== */
+.steps-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 30px;
+    padding: 20px;
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+}
+
+.step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+}
+
+.step-number {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: var(--border-color);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5em;
+    font-weight: bold;
+    transition: all 0.3s;
+    margin-bottom: 10px;
+}
+
+.step.active .step-number {
+    background: var(--primary-color);
+    color: white;
+    transform: scale(1.1);
+}
+
+.step.completed .step-number {
+    background: var(--success-color);
+    color: white;
+}
+
+.step-title {
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.step-line {
+    flex: 1;
+    height: 2px;
+    background: var(--border-color);
+    margin: 0 20px;
+    max-width: 100px;
+}
+
+/* ==================== 流程说明 ==================== */
+.workflow-guide {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 16px 20px;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 12px;
+    margin-bottom: 20px;
+    backdrop-filter: blur(4px);
+}
+
+.guide-step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.guide-icon {
+    font-size: 2em;
+}
+
+.guide-text {
+    font-size: 1.1em;
+    font-weight: 500;
+    color: #fff;
+}
+
+.guide-arrow {
+    font-size: 2em;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* ==================== 主内容区 ==================== */
+.main-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+    min-height: 80vh;
+}
+
+@media (max-width: 1200px) {
+    .main-content {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ==================== 生成区域 ==================== */
+.generation-section {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 24px;
+}
+
+/* section-header 公共基础样式 */
+.section-header {
+    color: white;
+    padding: 15px 20px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.section-header h2 {
+    margin: 0;
+    font-size: 1.5em;
+}
+
+/* 左侧：文生图 — 蓝色调 */
+#image-section {
+    background: #EEF3FF;
+    border-right: 4px solid rgba(100, 80, 200, 0.25);
+}
+
+#image-section .section-header {
+    background: linear-gradient(135deg, #4a90e2 0%, #357ab8 100%);
+}
+
+/* 右侧：图文生视频 — 紫色调 */
+#video-section {
+    background: #F3EEFF;
+}
+
+#video-section .section-header {
+    background: linear-gradient(135deg, #9c27b0 0%, #764ba2 100%);
+}
+
+/* ==================== 结果卡片 ==================== */
+.result-card {
+    border: 2px solid var(--success-color);
+}
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.result-header h3 {
+    margin: 0;
+    flex: 1;
+}
+
+.result-content {
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f8f9fa;
+}
+
+.result-placeholder {
+    color: var(--text-secondary);
+    font-size: 1.1em;
+    padding: 40px;
+    text-align: center;
+}
+
+.result-content img,
+.result-content video {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+/* ==================== 图片选择器 ==================== */
+.image-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.selected-image-box {
+    position: relative;
+    width: 100%;
+    padding-bottom: 56.25%; /* 16:9 比例 */
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #f8f9fa;
+}
+
+.selected-image-box .placeholder-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-secondary);
+    font-size: 1.1em;
+}
+
+.selected-image-box img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.image-selector-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+}
+
+.or-text {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+.image-selector-actions input {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.image-selector-actions input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.btn-upload-local {
+    width: 100%;
+    text-align: center;
+    padding: 10px 16px;
+    background: var(--background-dark);
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    transition: all 0.2s;
+    display: block;
+}
+
+.btn-upload-local:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.upload-progress-text {
+    padding: 8px 12px;
+    background: #1e3a5f;
+    border-left: 3px solid var(--primary-color);
+    border-radius: 4px;
+    font-size: 13px;
+    color: #90caf9;
+}
+
+/* ==================== 小按钮 ==================== */
+.btn-sm {
+    padding: 8px 16px;
+    font-size: 14px;
+}
+
+/* ==================== 任务状态栏 ==================== */
+.task-status-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(44, 62, 80, 0.95);
+    color: white;
+    padding: 15px 20px;
+    display: none;
+    align-items: center;
+    gap: 20px;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.2);
+    z-index: 1000;
+}
+
+.task-status-bar.show {
+    display: flex;
+}
+
+.task-status-bar .status-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.task-status-bar .status-label {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.task-status-bar .progress-container {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.task-status-bar .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--success-color));
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+/* ==================== 卡片样式 ==================== */
+.card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+    transition: box-shadow 0.3s;
+}
+
+.card:hover {
+    box-shadow: var(--shadow-hover);
+}
+
+.card h3 {
+    font-size: 1.3em;
+    margin-bottom: 15px;
+    color: var(--text-primary);
+}
+
+/* ==================== 表单样式 ==================== */
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.required {
+    color: var(--error-color);
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+    font-family: inherit;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.char-count {
+    display: block;
+    text-align: right;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-top: 5px;
+}
+
+.hint {
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    margin-bottom: 15px;
+}
+
+/* ==================== 参考图上传区 ==================== */
+.reference-upload-area {
+    margin-bottom: 15px;
+}
+
+.upload-slots {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+}
+
+/* 单张参考图布局 */
+.upload-slots.single-image {
+    grid-template-columns: 1fr;
+    max-width: 400px;
+    margin: 0 auto;
+}
+
+.upload-slots.single-image .upload-box {
+    padding-bottom: 75%; /* 4:3比例 */
+}
+
+.upload-slot {
+    display: flex;
+    flex-direction: column;
+}
+
+.slot-label {
+    text-align: center;
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+}
+
+.upload-box {
+    position: relative;
+    width: 100%;
+    padding-bottom: 100%;
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+    overflow: hidden;
+}
+
+.upload-box:hover {
+    border-color: var(--primary-color);
+    background: rgba(74, 144, 226, 0.05);
+}
+
+.upload-placeholder {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+}
+
+.upload-icon {
+    font-size: 2.5em;
+    font-weight: 300;
+    margin-bottom: 5px;
+}
+
+.preview-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* ==================== 按钮样式 ==================== */
+.btn {
+    width: 100%;
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-top: 10px;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #357ab8;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(74, 144, 226, 0.3);
+}
+
+.btn-success {
+    background: var(--success-color);
+    color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+    background: #45a015;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(82, 196, 26, 0.3);
+}
+
+.btn-secondary {
+    background: var(--text-secondary);
+    color: white;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #6c7a89;
+}
+
+/* ==================== 状态显示 ==================== */
+.status-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.status-item:last-child {
+    border-bottom: none;
+}
+
+.status-label {
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.status-value {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+/* ==================== 进度条 ==================== */
+.progress-bar-container {
+    width: 100%;
+    height: 8px;
+    background: var(--border-color);
+    border-radius: 4px;
+    margin: 15px 0;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--success-color));
+    transition: width 0.5s ease;
+    border-radius: 4px;
+}
+
+/* ==================== 结果展示 ==================== */
+.result-image-container,
+.result-video-container {
+    margin: 15px 0;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #f0f0f0;
+}
+
+.result-image-container img {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.result-video-container video {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.image-preview-box {
+    margin-bottom: 15px;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.image-preview-box img {
+    width: 100%;
+    max-height: 300px;
+    object-fit: cover;
+    display: block;
+}
+
+/* ==================== 提示列表 ==================== */
+.hint-list {
+    list-style: none;
+    padding: 0;
+}
+
+.hint-list li {
+    padding: 10px 0;
+    padding-left: 25px;
+    position: relative;
+    color: var(--text-secondary);
+}
+
+.hint-list li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--success-color);
+    font-weight: bold;
+}
+
+/* ==================== Toast 提示 ==================== */
+.toast {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    opacity: 0;
+    transition: all 0.3s;
+    z-index: 1000;
+    max-width: 80%;
+    text-align: center;
+}
+
+.toast.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}
+
+.toast.info {
+    background: rgba(74, 144, 226, 0.9);
+}
+
+.toast.success {
+    background: rgba(82, 196, 26, 0.9);
+}
+
+.toast.error {
+    background: rgba(255, 77, 79, 0.9);
+}
+
+/* ==================== 响应式设计 ==================== */
+@media (max-width: 768px) {
+    header h1 {
+        font-size: 1.8em;
+    }
+    
+    .upload-slots {
+        grid-template-columns: 1fr;
+    }
+    
+    .steps-indicator {
+        flex-direction: column;
+    }
+    
+    .step-line {
+        width: 2px;
+        height: 30px;
+        max-width: none;
+        margin: 10px 0;
+    }
+}
+
+/* ==================== 加载动画 ==================== */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.loading {
+    animation: pulse 1.5s ease-in-out infinite;
+}

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>通义万相2.7 视频生成器</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 通义万相2.7 视频生成器</h1>
+            <p class="subtitle">文生图→图文生视频，两阶段智能创作</p>
+        </header>
+
+        <!-- 流程说明 -->
+        <div class="workflow-guide">
+            <div class="guide-step">
+                <div class="guide-icon">1️⃣</div>
+                <div class="guide-text">填写图片描述 + 生成图片</div>
+            </div>
+            <div class="guide-arrow">→</div>
+            <div class="guide-step">
+                <div class="guide-icon">2️⃣</div>
+                <div class="guide-text">填写视频描述 + 生成视频</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- 左侧: 文生图区域 -->
+            <div class="generation-section" id="image-section">
+                <div class="section-header">
+                    <h2>🎨 文生图</h2>
+                </div>
+
+                <!-- 人物参考图上传区 -->
+                <div class="card">
+                    <h3>📷 人物参考图 (可选)</h3>
+                    <p class="hint">上传参考图片以保障人物一致性</p>
+                    
+                    <div class="reference-upload-area">
+                        <div class="upload-slots single-image">
+                            <div class="upload-slot" data-type="reference">
+                                <div class="slot-label">参考图</div>
+                                <div class="upload-box" onclick="document.getElementById('ref-image').click()">
+                                    <img class="preview-img" id="preview-reference" style="display:none;">
+                                    <div class="upload-placeholder">
+                                        <span class="upload-icon">+</span>
+                                        <span>点击上传参考图</span>
+                                    </div>
+                                </div>
+                                <input type="file" id="ref-image" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 'reference')">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 图片描述 -->
+                <div class="card">
+                    <h3>🎨 图片描述</h3>
+                    
+                    <div class="form-group">
+                        <label for="image-prompt">图片描述文本 <span class="required">*</span></label>
+                        <textarea id="image-prompt" rows="4" placeholder="详细描述你想要生成的图片内容..."></textarea>
+                        <span class="char-count"><span id="image-prompt-count">0</span>/5000</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="negative-prompt">反向提示词 (可选)</label>
+                        <input type="text" id="negative-prompt" placeholder="不希望在画面中出现的内容...">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="image-size">图片尺寸</label>
+                        <select id="image-size">
+                            <option value="1K">1K (1024×1024)</option>
+                            <option value="2K" selected>2K (2048×2048) - 推荐</option>
+                            <option value="4K">4K (4096×4096)</option>
+                        </select>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="generateImage()">
+                        🖼️ 生成图片
+                    </button>
+                </div>
+
+                <!-- 图片结果展示 -->
+                <div class="card result-card" id="image-result-card">
+                    <div class="result-header">
+                        <h3>🖼️ 生成的图片</h3>
+                        <button class="btn btn-sm btn-secondary" onclick="downloadResult('image')">
+                            💾 下载
+                        </button>
+                    </div>
+                    <div class="result-content">
+                        <div class="result-placeholder" id="image-placeholder">
+                            <span>图片生成后将在此显示</span>
+                        </div>
+                        <img id="generated-image" src="" alt="生成的图片" style="display:none;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧: 图文生视频区域 -->
+            <div class="generation-section" id="video-section">
+                <div class="section-header">
+                    <h2>🎬 图文生视频</h2>
+                </div>
+
+                <!-- 首帧图片选择 -->
+                <div class="card" id="image-selection-card">
+                    <h3>📸 首帧图片 <span class="required">*</span></h3>
+                    <p class="hint">上传本地图片或输入公网图片URL作为视频首帧</p>
+                    
+                    <div class="image-selector">
+                        <div class="selected-image-box" id="selected-image-box">
+                            <div class="placeholder-text">请选择图片</div>
+                            <img id="selected-video-image" src="" style="display:none;">
+                        </div>
+                        <div class="image-selector-actions">
+                            <label class="btn btn-sm btn-secondary btn-upload-local" style="cursor:pointer;">
+                                📁 上传本地图片
+                                <input type="file" id="local-image-input" accept="image/*" style="display:none;" onchange="handleLocalImageUpload(this)">
+                            </label>
+                            <span class="or-text">或</span>
+                            <input type="text" id="image-url-input" placeholder="输入公网图片URL (https://...)" oninput="handleUrlInput(this.value)">
+                        </div>
+                    </div>
+
+                    <!-- 本地图片上传进度 -->
+                    <div id="local-upload-status" style="display:none; margin-top:10px;">
+                        <div class="upload-progress-text" id="upload-progress-text">正在上传并处理中...</div>
+                    </div>
+                </div>
+
+                <!-- 视频描述 -->
+                <div class="card">
+                    <h3>🎬 视频描述</h3>
+                    
+                    <div class="form-group">
+                        <label for="video-prompt">视频描述文本 <span class="required">*</span></label>
+                        <textarea id="video-prompt" rows="3" placeholder="描述视频中的动作和场景..."></textarea>
+                        <span class="char-count"><span id="video-prompt-count">0</span>/1500</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="video-resolution">视频分辨率</label>
+                        <select id="video-resolution">
+                            <option value="720P" selected>720P - 推荐</option>
+                            <option value="1080P">1080P - 高清</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="video-duration">视频时长 (秒) <small style="color:#999">2-15秒</small></label>
+                        <input type="number" id="video-duration" value="5" min="2" max="15">
+                    </div>
+
+                    <button class="btn btn-primary" onclick="generateVideo()" id="btn-generate-video">
+                        🎥 生成视频
+                    </button>
+                </div>
+
+                <!-- 视频结果展示 -->
+                <div class="card result-card" id="video-result-card">
+                    <div class="result-header">
+                        <h3>🎬 生成的视频</h3>
+                        <button class="btn btn-sm btn-secondary" onclick="downloadResult('video')">
+                            💾 下载
+                        </button>
+                    </div>
+                    <div class="result-content">
+                        <div class="result-placeholder" id="video-placeholder">
+                            <span>视频生成后将在此显示</span>
+                        </div>
+                        <video id="generated-video" controls style="display:none;">
+                            <source src="" type="video/mp4">
+                            您的浏览器不支持视频播放
+                        </video>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 任务状态栏 -->
+        <div class="task-status-bar" id="task-status-bar">
+            <div class="status-info">
+                <span class="status-label">当前任务:</span>
+                <span id="current-task-name">-</span>
+            </div>
+            <div class="progress-container">
+                <div class="progress-bar" id="task-progress-bar"></div>
+            </div>
+            <div class="status-info">
+                <span id="current-task-status">-</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 提示 -->
+    <div id="toast" class="toast"></div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
