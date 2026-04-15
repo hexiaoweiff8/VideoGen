@@ -42,7 +42,18 @@
             </div>
         </header>
 
-        <!-- 流程说明 -->
+        <!-- Tab 导航 -->
+        <div class="tab-nav">
+            <button class="tab-btn active" data-tab="studio" onclick="switchTab('studio')">
+                🎨 创作工作台
+            </button>
+            <button class="tab-btn" data-tab="storyboard" onclick="switchTab('storyboard')">
+                🋏️ 分镜规划
+            </button>
+        </div>
+
+        <!-- Tab 1: 创作工作台 -->
+        <div class="tab-panel" id="tab-studio">
         <div class="workflow-guide">
             <div class="guide-step">
                 <div class="guide-icon">1️⃣</div>
@@ -320,6 +331,89 @@
                 <span id="current-task-status">-</span>
             </div>
         </div>
+        </div><!-- /tab-studio -->
+
+        <!-- Tab 2: 分镜规划 -->
+        <div class="tab-panel" id="tab-storyboard" style="display:none;">
+            <div class="storyboard-layout">
+                <!-- 左侧：输入区 -->
+                <div class="storyboard-input-panel">
+                    <div class="card">
+                        <h3>🋏️ 场景描述</h3>
+                        <p class="hint">输入整体故事或场景，AI 会按分镜脚本师的思维自动拆分，生成文生图 + 图文生视频双组提示词</p>
+                        <div class="form-group">
+                            <label for="scene-description">场景 / 故事描述 <span class="required">*</span></label>
+                            <textarea id="scene-description" rows="6" placeholder="例如：清晨时分，一个女孩提着行李走出公寓，走过青石板路，去赶一列将要离开的火车..."></textarea>
+                        </div>
+                        <div class="storyboard-options">
+                            <div class="form-group" style="flex:1">
+                                <label for="scene-style">画面风格</label>
+                                <select id="scene-style">
+                                    <option value="电影感写实">🎥 电影感写实</option>
+                                    <option value="山水水墨画">🏡 山水水墨画</option>
+                                    <option value="赛博潮科幻">🚀 赛博潮科幻</option>
+                                    <option value="动漯广告">🎨 动漯广告</option>
+                                    <option value="纪录片自然">🌿 纪录片自然</option>
+                                    <option value="黑色电影">🔮 黑色电影</option>
+                                    <option value="日系动漯">✨ 日系动漯</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label for="scene-num">分镜数量</label>
+                                <select id="scene-num">
+                                    <option value="auto">AI 自动决定</option>
+                                    <option value="3">3 个</option>
+                                    <option value="4">4 个</option>
+                                    <option value="5">5 个</option>
+                                    <option value="6">6 个</option>
+                                    <option value="7">7 个</option>
+                                    <option value="8">8 个</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label for="scene-model">模型</label>
+                                <select id="scene-model">
+                                    <option value="qwen-plus">⚡ qwen-plus （快）</option>
+                                    <option value="qwen-max">🌟 qwen-max （慢但更好）</option>
+                                    <option value="qwen-turbo">🚀 qwen-turbo （最快）</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-split" id="btn-split-scenes" onclick="splitScenes()">
+                            ✨ AI 拆分分镜
+                        </button>
+                    </div>
+
+                    <!-- 故事摘要（生成后显示） -->
+                    <div class="card" id="story-summary-card" style="display:none;">
+                        <h3>📝 故事摘要</h3>
+                        <p id="story-summary-text"></p>
+                        <div style="display:flex; gap:8px; margin-top:10px;">
+                            <span class="summary-badge" id="summary-total"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧：分镜卡片区 -->
+                <div class="storyboard-result-panel">
+                    <!-- 加载中占位符 -->
+                    <div class="scene-loading" id="scene-loading" style="display:none;">
+                        <div class="scene-loading-spinner"></div>
+                        <p>分镜脚本师正在构思中…</p>
+                    </div>
+
+                    <!-- 分镜卡片列表 -->
+                    <div class="scene-cards" id="scene-cards">
+                        <!-- 待概占位符 -->
+                        <div class="scene-empty" id="scene-empty">
+                            <div class="scene-empty-icon">🋏️</div>
+                            <p>输入场景描述后点击“✨ AI 拆分分镜”</p>
+                            <p style="font-size:.85em;color:#aaa">模型会自动拆分并生成每个分镜的文生图 + 视频提示词</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div><!-- /tab-storyboard -->
     </div>
 
     <!-- Toast 提示 -->

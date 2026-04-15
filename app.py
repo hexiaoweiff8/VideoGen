@@ -12,7 +12,7 @@ from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from config import (
     IMAGE_API_URL, VIDEO_API_URL, TASK_QUERY_URL,
-    IMAGE_API_KEY, VIDEO_API_KEY,
+    IMAGE_API_KEY, VIDEO_API_KEY, QWEN_API_KEY, QWEN_API_URL,
     POLL_INTERVAL, POLL_TIMEOUT,
     IMAGE_SAVE_DIR, VIDEO_SAVE_DIR,
     FLASK_HOST, FLASK_PORT, FLASK_DEBUG
@@ -626,6 +626,116 @@ def serve_image(filename):
 def serve_video(filename):
     """提供视频文件访问"""
     return send_from_directory(VIDEO_SAVE_DIR, filename)
+
+
+# ==================== 分镜规划（千问大模型） ====================
+
+SCENE_SYSTEM_PROMPT = """你是一位经验丰富的分镜脚本师和AI生成提示词专家，精通电影视觉语言、构图美学、光影设计。
+
+你的任务：把用户的场景描述拆分成若干个电影分镜，并为每个分镜提供两组高质量 AI 生成提示词。
+
+《文生图提示词 (image_prompt) 要求》
+- 语言：中文
+- 内容要素：镜头类型（极近景/近景/中景/全景/远景/鸟瞰等）、人物外貌服装表情动作细节、环境场景细节描述、光线氛围（清晨晨曦/黄昏逆光/戏剧性侧光/柔和散射光等）、色调风格、画质词
+- 画质词必包含：电影级画面、超高清、浅景深、写实精美
+- 字数：120≈250字
+- 禁止：人物姓名，改用外貌特征描述
+
+《图文生视频提示词 (video_prompt) 要求》
+- 语言：中文
+- 必须包含以下六个维度，缺一不可：
+  ① 镜头运动：具体运动方式，如「缓慢向前推镜」「手持跟步轻微摇晃」「环绕人物低角度旋转」「无人机高空缓慢拉远」
+  ② 人物动态：主体具体动作流程和层次细节，如「手指微抖按住眼泪」「身影缓慢转身回眼」
+  ③ 环境动态：场景中可见的动态变化，如「山间薄雾缓缓升腾」「细小雨滴打在青石板路上」
+  ④ 光影变化：光线和色调的动态变化，如「日光自左上角逆射将轮廓勾勒得更加清晰」
+  ⑤ 节奏感：镜头运动的速度和韵律，如「由慢及快加速推入」「均匀缓慢平移」
+  ⑥ 情绪氛围：镜头语言传达的心理状态和情感层次
+- 格式：动词开头，层次递进，详尽具体、有画面感
+- 字数：120≈180字
+
+分镜数量选取原则：根据场景复杂度决定，建议 3≈8 个分镜，确保故事连贯性和视觉多样性。
+
+必须以如下 JSON 格式返回，不要返回任何其他内容：
+{
+  "total_scenes": 数字,
+  "story_summary": "故事摘要（中文，50字内）",
+  "scenes": [
+    {
+      "scene_number": 1,
+      "scene_title": "分镜标题（4≈8字）",
+      "scene_desc": "分镜说明（中文，说明这个镜头的作用和内容）",
+      "shot_type": "镜头类型",
+      "mood": "情绪氛围",
+      "image_prompt": "中文文生图提示词",
+      "video_prompt": "中文图文生视频提示词（六维度详尽描述）"
+    }
+  ]
+}"""
+
+
+def split_scenes_with_qwen(description, style="电影感写实", num_scenes="auto", api_key=None, model="qwen-plus"):
+    """调用千问大模型将场景描述拆分为分镜"""
+    _api_key = api_key or QWEN_API_KEY
+    _model   = model or "qwen-plus"
+    
+    user_prompt = f"场景描述：{description}\n画面风格：{style}"
+    if num_scenes != "auto" and str(num_scenes).isdigit():
+        user_prompt += f"\n请生成 {num_scenes} 个分镜"
+    else:
+        user_prompt += "\n请根据内容复杂度自动决定分镜数量（3≈8个）"
+    
+    payload = {
+        "model": _model,
+        "messages": [
+            {"role": "system", "content": SCENE_SYSTEM_PROMPT},
+            {"role": "user",   "content": user_prompt}
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.75,
+        "max_tokens": 4096
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {_api_key}"
+    }
+    print(f"[分镜规划] 调用 {_model}, 场景: {description[:40]}...")
+    resp = requests.post(QWEN_API_URL, json=payload, headers=headers, timeout=1200)
+    print(f"[分镜规划] HTTP状态码: {resp.status_code}")
+    if not resp.ok:
+        print(f"[分镜规划] 错误响应体: {resp.text[:500]}")
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    print(f"[分镜规划] 模型返回内容 ({len(content)}字): {content[:200]}...")
+    return json.loads(content)
+
+
+@app.route('/api/split-scenes', methods=['POST'])
+def api_split_scenes():
+    """分镜拆分接口"""
+    try:
+        data = request.json
+        description = data.get('description', '').strip()
+        style       = data.get('style', '电影感写实').strip()
+        num_scenes  = data.get('num_scenes', 'auto')
+        api_key     = data.get('api_key', '').strip() or None
+        model       = data.get('model', 'qwen-plus').strip() or 'qwen-plus'
+        
+        if not description:
+            return jsonify({'success': False, 'error': '请输入场景描述'}), 400
+        
+        result = split_scenes_with_qwen(description, style, num_scenes, api_key, model)
+        return jsonify({'success': True, 'data': result})
+    except json.JSONDecodeError as e:
+        print(f"[分镜规划] JSON解析失败: {e}")
+        return jsonify({'success': False, 'error': f'模型返回格式错误: {str(e)}'}), 500
+    except requests.exceptions.RequestException as e:
+        print(f"[分镜规划] 网络请求异常: {e}")
+        return jsonify({'success': False, 'error': f'千问API调用失败: {str(e)}'}), 500
+    except Exception as e:
+        import traceback
+        print(f"[分镜规划] 未知异常: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'服务器错误: {str(e)}'}), 500
 
 
 # ==================== 人物库接口 ====================

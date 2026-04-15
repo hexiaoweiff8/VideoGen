@@ -16,6 +16,11 @@ TASK_QUERY_URL = "https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
 # API Keys
 IMAGE_API_KEY = os.getenv("IMAGE_API_KEY", "sk-71d37f4158434469acf3640bd747476b")
 VIDEO_API_KEY = os.getenv("VIDEO_API_KEY", "sk-8d384464a7ff4d5fb42be752c5c05c55")
+# 千问API Key，默认与文生图共用（DashScope单 Key 可调用所有模型）
+QWEN_API_KEY  = os.getenv("QWEN_API_KEY", IMAGE_API_KEY)
+
+# 千问 OpenAI 兼容接口
+QWEN_API_URL  = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 # 任务轮询配置
 POLL_INTERVAL = 5  # 轮询间隔(秒)

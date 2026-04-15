@@ -952,6 +952,178 @@ function reloadRefSlotsFromChars() {
     showToast(`已加载「${names}」共${Math.min(allImages.length, 3)}张参考图`, 'success');
 }
 
+
+// ==================== Tab 切换 ====================
+
+/**
+ * 切换主 Tab
+ */
+function switchTab(tabId) {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabId);
+    });
+    document.querySelectorAll('.tab-panel').forEach(panel => {
+        panel.style.display = panel.id === `tab-${tabId}` ? 'block' : 'none';
+    });
+}
+
+
+// ==================== 分镜规划 ====================
+
+/**
+ * 调用后端拆分分镜
+ */
+async function splitScenes() {
+    const description = document.getElementById('scene-description').value.trim();
+    if (!description) { showToast('请输入场景描述', 'error'); return; }
+
+    const style     = document.getElementById('scene-style').value;
+    const numScenes = document.getElementById('scene-num').value;
+    const sceneModel = document.getElementById('scene-model').value;
+    const apiCfg    = getApiConfig();
+
+    // 更新UI状态
+    const btn = document.getElementById('btn-split-scenes');
+    btn.disabled = true;
+    btn.textContent = '正在构思分镜…';
+    document.getElementById('scene-loading').style.display = 'flex';
+    document.getElementById('scene-empty').style.display   = 'none';
+    document.getElementById('story-summary-card').style.display = 'none';
+    // 清除旧卡片
+    const cardsEl = document.getElementById('scene-cards');
+    Array.from(cardsEl.children).forEach(el => { if (!el.id) el.remove(); });
+
+    try {
+        const resp = await fetch('/api/split-scenes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                description,
+                style,
+                num_scenes: numScenes,
+                model: sceneModel,
+                api_key: apiCfg.image.api_key || ''
+            })
+        });
+        const result = await resp.json();
+
+        if (result.success) {
+            renderScenes(result.data);
+        } else {
+            showToast('分镜失败: ' + result.error, 'error');
+            document.getElementById('scene-empty').style.display = 'block';
+        }
+    } catch(e) {
+        showToast('请求失败: ' + e.message, 'error');
+        document.getElementById('scene-empty').style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '✨ AI 拆分分镜';
+        document.getElementById('scene-loading').style.display = 'none';
+    }
+}
+
+/**
+ * 渲染分镜卡片
+ */
+function renderScenes(data) {
+    const cardsEl = document.getElementById('scene-cards');
+    // 清除除 empty 外的旧卡片
+    Array.from(cardsEl.children).forEach(el => { if (!el.id) el.remove(); });
+
+    // 显示故事摘要
+    if (data.story_summary) {
+        document.getElementById('story-summary-card').style.display = 'block';
+        document.getElementById('story-summary-text').textContent = data.story_summary;
+        document.getElementById('summary-total').textContent = `共 ${data.total_scenes} 个分镜`;
+    }
+
+    const scenes = data.scenes || [];
+    if (scenes.length === 0) {
+        document.getElementById('scene-empty').style.display = 'block';
+        return;
+    }
+
+    scenes.forEach(scene => {
+        const card = document.createElement('div');
+        card.className = 'scene-card';
+        card.innerHTML = `
+            <div class="scene-card-header">
+                <div class="scene-card-meta">
+                    <span class="scene-num-badge">分镜 ${scene.scene_number}</span>
+                    <span class="scene-shot-badge">${scene.shot_type || ''}</span>
+                    <span class="scene-mood-badge">${scene.mood || ''}</span>
+                </div>
+                <div class="scene-card-title">${scene.scene_title}</div>
+            </div>
+            <p class="scene-desc">${scene.scene_desc}</p>
+
+            <div class="prompt-block">
+                <div class="prompt-label">
+                    <span>🖼️ 文生图提示词</span>
+                    <button class="btn-copy" onclick="copyText(this, 'img-prompt-${scene.scene_number}')">&#x2398; 复制</button>
+                </div>
+                <textarea class="prompt-textarea" id="img-prompt-${scene.scene_number}" rows="4">${scene.image_prompt}</textarea>
+            </div>
+
+            <div class="prompt-block">
+                <div class="prompt-label">
+                    <span>🎬 视频提示词</span>
+                    <button class="btn-copy" onclick="copyText(this, 'vid-prompt-${scene.scene_number}')">&#x2398; 复制</button>
+                </div>
+                <textarea class="prompt-textarea" id="vid-prompt-${scene.scene_number}" rows="3">${scene.video_prompt}</textarea>
+            </div>
+
+            <button class="btn btn-sm btn-success btn-send-to-studio"
+                onclick="sendToStudio(${scene.scene_number})">
+                → 发送到创作工作台
+            </button>
+        `;
+        cardsEl.appendChild(card);
+    });
+
+    showToast(`分镜生成完成，共 ${scenes.length} 个`, 'success');
+}
+
+/**
+ * 复制指定 textarea 的内容
+ */
+function copyText(btn, textareaId) {
+    const el = document.getElementById(textareaId);
+    if (!el) return;
+    navigator.clipboard.writeText(el.value).then(() => {
+        btn.textContent = '✔ 已复制';
+        setTimeout(() => { btn.innerHTML = '&#x2398; 复制'; }, 1500);
+    });
+}
+
+/**
+ * 将分镜提示词发送到创作工作台
+ */
+function sendToStudio(sceneNumber) {
+    const imgPrompt = document.getElementById(`img-prompt-${sceneNumber}`)?.value || '';
+    const vidPrompt = document.getElementById(`vid-prompt-${sceneNumber}`)?.value || '';
+
+    // 填入左侧文生图提示词
+    const imagePromptEl = document.getElementById('image-prompt');
+    if (imagePromptEl) {
+        imagePromptEl.value = imgPrompt;
+        updateCharCount('image-prompt', 'image-prompt-count');
+    }
+    // 填入右侧视频提示词
+    const videoPromptEl = document.getElementById('video-prompt');
+    if (videoPromptEl) {
+        videoPromptEl.value = vidPrompt;
+        updateCharCount('video-prompt', 'video-prompt-count');
+    }
+
+    // 切换到工作台 Tab
+    switchTab('studio');
+    showToast(`分镜 ${sceneNumber} 已发送到创作工作台`, 'success');
+    // 滑动到顶部
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 /**
  * 删除人物
  */
