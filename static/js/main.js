@@ -2,8 +2,10 @@
 let currentTaskId = null;
 let currentImageFilename = null;
 let currentVideoFilename = null;
-let videoSourceImageUrl = null;  // 右侧视频生成使用的图片URL（oss:// 或 https://），独立于左侧
-let referenceImageUrl = null;    // 左侧文生图使用的参考图Base64 URL
+let videoSourceImageUrl = null;    // 右侧视频生成使用的图片URL
+let lastGeneratedImageUrl = null;  // 左侧最近生成的图片URL（公网可访问）
+let lastGeneratedImageFilename = null; // 左侧最近生成图片的文件名
+let referenceImageUrl = null;      // 左侧文生图使用的参考图Base64 URL
 let pollTimer = null;
 let pollStartTime = null;
 
@@ -218,7 +220,7 @@ async function generateImage() {
 }
 
 /**
- * 显示生成的图片（仅更新左侧区域，不干涉右侧）
+ * 显示生成的图片（仅更新左侧区域）并启用右侧「使用已生成图片」按钮
  */
 function displayGeneratedImage(filename, aliUrl) {
     const imageResultCard = document.getElementById('image-result-card');
@@ -227,11 +229,101 @@ function displayGeneratedImage(filename, aliUrl) {
     
     const localUrl = `/images/${filename}`;
     
-    // 在图片结果区显示本地图片
+    // 左侧结果区显示本地图片
     generatedImage.src = localUrl;
     generatedImage.style.display = 'block';
     imagePlaceholder.style.display = 'none';
     imageResultCard.style.display = 'block';
+    
+    // 保存左侧生成的图片信息，供右侧使用
+    lastGeneratedImageUrl = aliUrl;
+    lastGeneratedImageFilename = filename;
+    
+    // 启用「使用已生成图片」按钮
+    const btnUseGenerated = document.getElementById('btn-use-generated');
+    if (btnUseGenerated) {
+        btnUseGenerated.disabled = false;
+        btnUseGenerated.title = `使用左侧已生成的图片：${filename}`;
+    }
+}
+
+/**
+ * 使用左侧已生成的图片作为视频首帧
+ */
+function useGeneratedImage() {
+    if (!lastGeneratedImageUrl) {
+        showToast('请先在左侧生成一张图片', 'error');
+        return;
+    }
+    
+    // 设置视频图片源
+    videoSourceImageUrl = lastGeneratedImageUrl;
+    
+    // 在预览框显示图片
+    const selectedVideoImage = document.getElementById('selected-video-image');
+    const selectedImageBox = document.getElementById('selected-image-box');
+    selectedVideoImage.src = `/images/${lastGeneratedImageFilename}`;
+    selectedVideoImage.style.display = 'block';
+    selectedImageBox.querySelector('.placeholder-text').style.display = 'none';
+    
+    // 禁用并清空URL输入框
+    setUrlInputState('disabled', '已使用左侧生成的图片');
+    
+    // 显示状态和清除按钮
+    const statusDiv = document.getElementById('local-upload-status');
+    const progressText = document.getElementById('upload-progress-text');
+    const btnClear = document.getElementById('btn-clear-upload');
+    statusDiv.style.display = 'block';
+    progressText.textContent = `✨ 已选择左侧生成的图片`;
+    progressText.style.color = '#4caf50';
+    btnClear.style.display = 'inline-block';
+    document.getElementById('btn-generate-video').disabled = false;  // 确保视频按钮可用
+    
+    showToast('已选择左侧生成的图片，可以生成视频了', 'success');
+}
+
+/**
+ * 设置URL输入框的启用/禁用状态
+ */
+function setUrlInputState(state, placeholder) {
+    const input = document.getElementById('image-url-input');
+    if (state === 'disabled') {
+        input.disabled = true;
+        input.value = '';
+        input.placeholder = placeholder || '已选择图片源';
+        input.classList.add('url-input-locked');
+    } else {
+        input.disabled = false;
+        input.placeholder = '输入公网图片URL (https://...)';
+        input.classList.remove('url-input-locked');
+    }
+}
+
+/**
+ * 清除已选择的图片源（恢复空状态）
+ */
+function clearImageSource() {
+    videoSourceImageUrl = null;
+    
+    // 清除预览
+    const selectedVideoImage = document.getElementById('selected-video-image');
+    const selectedImageBox = document.getElementById('selected-image-box');
+    selectedVideoImage.src = '';
+    selectedVideoImage.style.display = 'none';
+    selectedImageBox.querySelector('.placeholder-text').style.display = 'block';
+    
+    // 隐藏状态区
+    document.getElementById('local-upload-status').style.display = 'none';
+    document.getElementById('btn-clear-upload').style.display = 'none';
+    
+    // 恢复URL输入框
+    setUrlInputState('enabled');
+    
+    // 重置文件输入框
+    const fileInput = document.getElementById('local-image-input');
+    if (fileInput) fileInput.value = '';
+    
+    showToast('已清除图片选择', 'info');
 }
 
 /**
@@ -239,12 +331,12 @@ function displayGeneratedImage(filename, aliUrl) {
  */
 function handleUrlInput(value) {
     if (value.trim()) {
-        // 用户输入了URL，清除之前上传的图片
+        // 用户输入了URL，清除之前的选择状态
         videoSourceImageUrl = null;
         // 隐藏上传状态
-        const statusDiv = document.getElementById('local-upload-status');
-        statusDiv.style.display = 'none';
-        // 隐藏预览（URL不做预览）
+        document.getElementById('local-upload-status').style.display = 'none';
+        document.getElementById('btn-clear-upload').style.display = 'none';
+        // 隐藏预览
         const selectedVideoImage = document.getElementById('selected-video-image');
         const selectedImageBox = document.getElementById('selected-image-box');
         selectedVideoImage.style.display = 'none';
@@ -302,13 +394,18 @@ async function handleLocalImageUpload(input) {
         if (result.success) {
             // 使用 oss:// 临时URL作为视频首帧
             videoSourceImageUrl = result.oss_url;
-            document.getElementById('image-url-input').value = '';
+            // 禁用URL输入框，明确显示当前图片源
+            setUrlInputState('disabled', '已使用本地上传的图片');
             progressText.textContent = `✅ 上传成功！有效期48小时`;
             progressText.style.color = '#4caf50';
+            document.getElementById('btn-clear-upload').style.display = 'inline-block';
+            document.getElementById('btn-generate-video').disabled = false;  // 恢复视频按钮
             showToast('本地图片上传成功，可以生成视频了！', 'success');
         } else {
             progressText.textContent = `❌ 上传失败: ${result.error}`;
             progressText.style.color = '#f44336';
+            // 失败时恢复URL输入框
+            setUrlInputState('enabled');
             showToast('上传失败: ' + result.error, 'error');
         }
     } catch (error) {

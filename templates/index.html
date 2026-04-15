@@ -111,7 +111,7 @@
                 <!-- 首帧图片选择 -->
                 <div class="card" id="image-selection-card">
                     <h3>📸 首帧图片 <span class="required">*</span></h3>
-                    <p class="hint">上传本地图片或输入公网图片URL作为视频首帧</p>
+                    <p class="hint">选择一张图片作为视频首帧</p>
                     
                     <div class="image-selector">
                         <div class="selected-image-box" id="selected-image-box">
@@ -119,18 +119,28 @@
                             <img id="selected-video-image" src="" style="display:none;">
                         </div>
                         <div class="image-selector-actions">
+                            <!-- 方式1：使用左侧已生成的图片 -->
+                            <button class="btn btn-sm btn-success" onclick="useGeneratedImage()" id="btn-use-generated" disabled>
+                                ✨ 使用已生成的图片
+                            </button>
+                            <span class="or-text">或</span>
+                            <!-- 方式2：上传本地图片 -->
                             <label class="btn btn-sm btn-secondary btn-upload-local" style="cursor:pointer;">
                                 📁 上传本地图片
                                 <input type="file" id="local-image-input" accept="image/*" style="display:none;" onchange="handleLocalImageUpload(this)">
                             </label>
                             <span class="or-text">或</span>
+                            <!-- 方式3：输入URL -->
                             <input type="text" id="image-url-input" placeholder="输入公网图片URL (https://...)" oninput="handleUrlInput(this.value)">
                         </div>
                     </div>
 
                     <!-- 本地图片上传进度 -->
                     <div id="local-upload-status" style="display:none; margin-top:10px;">
-                        <div class="upload-progress-text" id="upload-progress-text">正在上传并处理中...</div>
+                        <div class="upload-status-row">
+                            <div class="upload-progress-text" id="upload-progress-text">正在上传并处理中...</div>
+                            <button class="btn-clear-source" id="btn-clear-upload" onclick="clearImageSource()" style="display:none;">× 清除</button>
+                        </div>
                     </div>
                 </div>
 

@@ -326,6 +326,42 @@ header h1 {
     border-radius: 4px;
     font-size: 13px;
     color: #90caf9;
+    flex: 1;
+}
+
+/* 上传状态行：文字 + 清除按钮横排 */
+.upload-status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* 清除图片源按钮 */
+.btn-clear-source {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid rgba(255, 100, 100, 0.6);
+    border-radius: 4px;
+    color: #ff8a80;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-clear-source:hover {
+    background: rgba(255, 100, 100, 0.15);
+    border-color: #ff5252;
+    color: #ff5252;
+}
+
+/* URL输入框被锁定时的样式 */
+.url-input-locked {
+    background: #f0f0f0 !important;
+    color: #aaa !important;
+    cursor: not-allowed !important;
+    border-color: #ddd !important;
 }
 
 /* ==================== 小按钮 ==================== */
