@@ -5,9 +5,16 @@ let currentVideoFilename = null;
 let videoSourceImageUrl = null;    // 右侧视频生成使用的图片URL
 let lastGeneratedImageUrl = null;  // 左侧最近生成的图片URL（公网可访问）
 let lastGeneratedImageFilename = null; // 左侧最近生成图片的文件名
-let referenceImageUrl = null;      // 左侧文生图使用的参考图Base64 URL
+let referenceImageUrls = [null, null, null]; // 左侧文生图使用的参考图Base64 URL，最多3张
 let pollTimer = null;
 let pollStartTime = null;
+
+// 新建人物表单中的临时图片数据 [{filename, base64_url}, ...]
+let newCharImages = [null, null, null];
+// 当前已选中的人物ID数组（支持多选）
+let selectedCharIds = [];
+// 人物数据缓存 { charId: characterObject }
+let selectedCharsCache = {};
 
 const POLL_INTERVAL = 5000; // 5秒
 const POLL_TIMEOUT = 600000; // 10分钟
@@ -105,9 +112,9 @@ function updateCharCount(textareaId, countId) {
 // ==================== 参考图上传 ====================
 
 /**
- * 处理参考图上传
+ * 处理参考图上传（支持多插槽，以索引区分）
  */
-async function handleReferenceUpload(input, type) {
+async function handleReferenceUpload(input, index) {
     const file = input.files[0];
     if (!file) return;
     
@@ -116,19 +123,21 @@ async function handleReferenceUpload(input, type) {
         showToast('请上传图片文件', 'error');
         return;
     }
-    
     if (file.size > 20 * 1024 * 1024) {
         showToast('图片大小不能超过20MB', 'error');
         return;
     }
     
-    // 显示预览
-    const preview = document.getElementById(`preview-${type}`);
+    // 立即显示本地预览
+    const preview = document.getElementById(`preview-ref-${index}`);
+    const placeholder = document.getElementById(`placeholder-ref-${index}`);
+    const clearBtn = document.getElementById(`clear-ref-${index}`);
     const reader = new FileReader();
     reader.onload = function(e) {
         preview.src = e.target.result;
         preview.style.display = 'block';
-        preview.parentElement.querySelector('.upload-placeholder').style.display = 'none';
+        placeholder.style.display = 'none';
+        if (clearBtn) clearBtn.style.display = 'flex';
     };
     reader.readAsDataURL(file);
     
@@ -137,24 +146,46 @@ async function handleReferenceUpload(input, type) {
     formData.append('image', file);
     
     try {
-        showToast('正在上传参考图...');
+        showToast(`正在上传参考图${index + 1}...`);
         const response = await fetch('/api/upload-image', {
             method: 'POST',
             body: formData
         });
-        
         const result = await response.json();
         
         if (result.success) {
-            // 保存参考图URL
-            referenceImageUrl = result.base64_url;
-            showToast('参考图上传成功', 'success');
+            referenceImageUrls[index] = result.base64_url;
+            const uploaded = referenceImageUrls.filter(u => u !== null).length;
+            showToast(`参考图${index + 1}上传成功（已上传${uploaded}张）`, 'success');
         } else {
             showToast('上传失败: ' + result.error, 'error');
+            clearRefImage(null, index); // 失败则清除预览
         }
     } catch (error) {
         showToast('上传失败: ' + error.message, 'error');
+        clearRefImage(null, index);
     }
+    input.value = ''; // 允许重复选择相同文件
+}
+
+/**
+ * 清除单个参考图插槽
+ */
+function clearRefImage(event, index) {
+    if (event) event.stopPropagation(); // 防止触发upload-box的click
+    
+    referenceImageUrls[index] = null;
+    
+    const preview = document.getElementById(`preview-ref-${index}`);
+    const placeholder = document.getElementById(`placeholder-ref-${index}`);
+    const clearBtn = document.getElementById(`clear-ref-${index}`);
+    const fileInput = document.getElementById(`ref-image-${index}`);
+    
+    preview.src = '';
+    preview.style.display = 'none';
+    placeholder.style.display = 'flex';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (fileInput) fileInput.value = '';
 }
 
 // ==================== 阶段1: 生成图片 ====================
@@ -173,7 +204,10 @@ async function generateImage() {
     }
     
     // 收集参考图(如果有的话)
-    const refImages = referenceImageUrl ? [referenceImageUrl] : [];
+    const refImages = referenceImageUrls.filter(url => url !== null);
+    
+    // 获取页面API配置
+    const apiCfg = getApiConfig();
     
     // 更新UI
     updateStatus('生成图片', '处理中...');
@@ -191,7 +225,8 @@ async function generateImage() {
                 prompt: prompt,
                 negative_prompt: negativePrompt,
                 size: size,
-                reference_images: refImages
+                reference_images: refImages,
+                ...apiCfg.image  // 包含页面自定义的api_key和base_url
             })
         });
         
@@ -459,6 +494,9 @@ async function generateVideo() {
     // 更新UI
     updateStatus('生成视频', '创建任务中...');
     
+    // 获取页面API配置
+    const apiCfg = getApiConfig();
+    
     try {
         showToast('正在创建视频任务...');
         
@@ -478,7 +516,8 @@ async function generateVideo() {
                 image_url: imageUrl,
                 prompt: prompt,
                 resolution: resolution,
-                duration: duration
+                duration: duration,
+                ...apiCfg.video  // 包含页面自定义的api_key和base_url
             })
         });
         
@@ -618,7 +657,7 @@ async function fullPipeline() {
     }
     
     // 收集参考图(如果有的话)
-    const refImages = referenceImageUrl ? [referenceImageUrl] : [];
+    const refImages = referenceImageUrls.filter(url => url !== null);
     
     // 更新UI
     updateStatus('一键生成', '生成图片中...');
@@ -707,4 +746,357 @@ document.getElementById('video-prompt').addEventListener('input', () => {
 window.addEventListener('load', () => {
     console.log('通义万相2.7 视频生成器已加载');
     showToast('欢迎使用通义万相视频生成器!', 'info');
+    loadSettings();      // 加载API设置
+    loadCharacters();    // 加载人物库
 });
+
+
+// ==================== API 设置 ====================
+
+const SETTINGS_KEY = 'wanx_api_settings';
+
+/**
+ * 保存设置到 localStorage
+ */
+function saveSettings() {
+    const settings = {
+        imageKey: document.getElementById('cfg-image-key').value.trim(),
+        videoKey: document.getElementById('cfg-video-key').value.trim(),
+        baseUrl: document.getElementById('cfg-base-url').value.trim()
+    };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    
+    const tip = document.getElementById('settings-save-tip');
+    tip.textContent = '已自动保存';
+    setTimeout(() => { tip.textContent = ''; }, 1500);
+}
+
+/**
+ * 从 localStorage 加载设置
+ */
+function loadSettings() {
+    try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (!raw) return;
+        const settings = JSON.parse(raw);
+        if (settings.imageKey) document.getElementById('cfg-image-key').value = settings.imageKey;
+        if (settings.videoKey) document.getElementById('cfg-video-key').value = settings.videoKey;
+        if (settings.baseUrl)  document.getElementById('cfg-base-url').value  = settings.baseUrl;
+    } catch(e) {}
+}
+
+/**
+ * 清除所有设置
+ */
+function clearSettings() {
+    localStorage.removeItem(SETTINGS_KEY);
+    document.getElementById('cfg-image-key').value = '';
+    document.getElementById('cfg-video-key').value = '';
+    document.getElementById('cfg-base-url').value  = '';
+    showToast('设置已清除，将使用服务器默认配置', 'info');
+}
+
+/**
+ * 切换设置面板显示/隐藏
+ */
+function toggleSettings() {
+    const panel = document.getElementById('settings-panel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+/**
+ * 获取当前页面配置（空则返回空对象，后端会自动fallback到默认）
+ */
+function getApiConfig() {
+    const imageKey = document.getElementById('cfg-image-key').value.trim();
+    const videoKey = document.getElementById('cfg-video-key').value.trim();
+    const baseUrl  = document.getElementById('cfg-base-url').value.trim();
+    
+    return {
+        image: {
+            ...(imageKey ? { api_key: imageKey } : {}),
+            ...(baseUrl  ? { base_url: baseUrl  } : {})
+        },
+        video: {
+            ...(videoKey ? { api_key: videoKey } : {}),
+            ...(baseUrl  ? { base_url: baseUrl  } : {})
+        }
+    };
+}
+
+
+// ==================== 人物库 ====================
+
+/**
+ * 加载并渲染人物库
+ */
+async function loadCharacters() {
+    try {
+        const resp = await fetch('/api/characters');
+        const data = await resp.json();
+        if (data.success) renderCharacterList(data.characters);
+    } catch(e) {
+        console.error('加载人物库失败', e);
+    }
+}
+
+/**
+ * 渲染人物列表
+ */
+function renderCharacterList(characters) {
+    const list = document.getElementById('char-list');
+    const empty = document.getElementById('char-empty');
+    
+    // 清除除了 empty 之外的内容
+    Array.from(list.children).forEach(el => {
+        if (el.id !== 'char-empty') el.remove();
+    });
+    
+    if (!characters || characters.length === 0) {
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+    
+    characters.forEach(char => {
+        const card = document.createElement('div');
+        card.className = 'char-card';
+        card.dataset.charId = char.id;
+        card.innerHTML = `
+            <div class="char-thumb" onclick="selectCharacter('${char.id}')">
+                ${char.thumbnail 
+                    ? `<img src="${char.thumbnail}" alt="${char.name}">` 
+                    : `<div class="char-thumb-placeholder">👤</div>`}
+            </div>
+            <div class="char-info" onclick="selectCharacter('${char.id}')">
+                <div class="char-name">${char.name}</div>
+                <div class="char-meta">${char.image_count}张图</div>
+            </div>
+            <button class="char-delete-btn" onclick="deleteCharacter('${char.id}', '${char.name}')" title="删除">×</button>
+        `;
+        list.appendChild(card);
+    });
+}
+
+/**
+ * 选择/取消人物（支持多选）
+ * - 未选中时：加入选中列表
+ * - 已选中时：从列表移除（反选）
+ * 最终将所有已选人物的参考图按顺序填入插槽（最多3张）
+ */
+async function selectCharacter(charId) {
+    const idx = selectedCharIds.indexOf(charId);
+    if (idx !== -1) {
+        // 反选
+        selectedCharIds.splice(idx, 1);
+        delete selectedCharsCache[charId];
+    } else {
+        // 新增选择，获取详情
+        try {
+            showToast('加载人物参考图...');
+            const resp = await fetch(`/api/characters/${charId}`);
+            const data = await resp.json();
+            if (!data.success) { showToast('加载失败', 'error'); return; }
+            selectedCharsCache[charId] = data.character;
+            selectedCharIds.push(charId);
+        } catch(e) {
+            showToast('加载人物失败: ' + e.message, 'error');
+            return;
+        }
+    }
+
+    // 更新高亮状态
+    document.querySelectorAll('.char-card').forEach(el => {
+        el.classList.toggle('char-card-selected', selectedCharIds.includes(el.dataset.charId));
+    });
+
+    // 重新计算参考图插槽
+    reloadRefSlotsFromChars();
+}
+
+/**
+ * 根据当前已选人物重新填充参考图插槽
+ */
+function reloadRefSlotsFromChars() {
+    // 清除全部插槽
+    for (let i = 0; i < 3; i++) clearRefImage(null, i);
+
+    if (selectedCharIds.length === 0) {
+        showToast('已取消所有人物选择', 'info');
+        return;
+    }
+
+    // 收集所有已选人物的图片，按选择顺序展平
+    const allImages = [];
+    selectedCharIds.forEach(id => {
+        const char = selectedCharsCache[id];
+        if (char && char.images) allImages.push(...char.images);
+    });
+
+    if (allImages.length > 3) {
+        showToast(`参考图共${allImages.length}张，插槽上限为3，取前3张`, 'info');
+    }
+
+    allImages.slice(0, 3).forEach((img, i) => {
+        referenceImageUrls[i] = img.base64_url;
+        const preview = document.getElementById(`preview-ref-${i}`);
+        const placeholder = document.getElementById(`placeholder-ref-${i}`);
+        const clearBtn = document.getElementById(`clear-ref-${i}`);
+        preview.src = img.base64_url;
+        preview.style.display = 'block';
+        placeholder.style.display = 'none';
+        if (clearBtn) clearBtn.style.display = 'flex';
+    });
+
+    const names = selectedCharIds.map(id => selectedCharsCache[id]?.name).filter(Boolean).join('、');
+    showToast(`已加载「${names}」共${Math.min(allImages.length, 3)}张参考图`, 'success');
+}
+
+/**
+ * 删除人物
+ */
+async function deleteCharacter(charId, charName) {
+    if (!confirm(`确定删除人物「${charName}」？`)) return;
+    try {
+        const resp = await fetch(`/api/characters/${charId}`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(`人物「${charName}」已删除`, 'success');
+            // 如果删除的是当前选中的人物，从选中列表中移除并重载插槽
+            if (selectedCharIds.includes(charId)) {
+                selectedCharIds = selectedCharIds.filter(id => id !== charId);
+                delete selectedCharsCache[charId];
+                reloadRefSlotsFromChars();
+            }
+            loadCharacters();
+        } else {
+            showToast('删除失败: ' + data.error, 'error');
+        }
+    } catch(e) {
+        showToast('删除失败', 'error');
+    }
+}
+
+/**
+ * 打开新建人物表单
+ */
+function openCreateCharacter() {
+    // 重置表单
+    document.getElementById('new-char-name').value = '';
+    newCharImages = [null, null, null];
+    for (let i = 0; i < 3; i++) {
+        const preview = document.getElementById(`new-char-preview-${i}`);
+        const ph = document.getElementById(`new-char-ph-${i}`);
+        const clearBtn = document.getElementById(`new-char-clear-${i}`);
+        const input = document.getElementById(`new-char-img-${i}`);
+        preview.src = ''; preview.style.display = 'none';
+        ph.style.display = 'flex';
+        clearBtn.style.display = 'none';
+        if (input) input.value = '';
+    }
+    document.getElementById('create-char-form').style.display = 'block';
+    document.getElementById('new-char-name').focus();
+}
+
+/**
+ * 取消新建人物
+ */
+function cancelCreateCharacter() {
+    document.getElementById('create-char-form').style.display = 'none';
+    newCharImages = [null, null, null];
+}
+
+/**
+ * 处理新建人物表单中的图片上传
+ */
+async function handleNewCharImg(input, index) {
+    const file = input.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { showToast('请上传图片文件', 'error'); return; }
+    if (file.size > 20 * 1024 * 1024) { showToast('图片不能超过20MB', 'error'); return; }
+    
+    // 展示本地预览
+    const preview = document.getElementById(`new-char-preview-${index}`);
+    const ph = document.getElementById(`new-char-ph-${index}`);
+    const clearBtn = document.getElementById(`new-char-clear-${index}`);
+    const reader = new FileReader();
+    reader.onload = e => {
+        preview.src = e.target.result;
+        preview.style.display = 'block';
+        ph.style.display = 'none';
+        clearBtn.style.display = 'flex';
+    };
+    reader.readAsDataURL(file);
+    
+    // 上传到服务器
+    const formData = new FormData();
+    formData.append('image', file);
+    try {
+        showToast(`上传参考图${index + 1}...`);
+        const resp = await fetch('/api/upload-image', { method: 'POST', body: formData });
+        const result = await resp.json();
+        if (result.success) {
+            newCharImages[index] = { filename: result.filename, base64_url: result.base64_url };
+            showToast(`图${index + 1}上传成功`, 'success');
+        } else {
+            showToast('上传失败: ' + result.error, 'error');
+            clearNewCharImg(null, index);
+        }
+    } catch(e) {
+        showToast('上传失败: ' + e.message, 'error');
+        clearNewCharImg(null, index);
+    }
+    input.value = '';
+}
+
+/**
+ * 清除新建人物表单中的单张图
+ */
+function clearNewCharImg(event, index) {
+    if (event) event.stopPropagation();
+    newCharImages[index] = null;
+    const preview = document.getElementById(`new-char-preview-${index}`);
+    const ph = document.getElementById(`new-char-ph-${index}`);
+    const clearBtn = document.getElementById(`new-char-clear-${index}`);
+    const input = document.getElementById(`new-char-img-${index}`);
+    preview.src = ''; preview.style.display = 'none';
+    ph.style.display = 'flex';
+    clearBtn.style.display = 'none';
+    if (input) input.value = '';
+}
+
+/**
+ * 保存新建人物
+ */
+async function saveCharacter() {
+    const name = document.getElementById('new-char-name').value.trim();
+    if (!name) { showToast('请输入人物名称', 'error'); return; }
+    
+    const validImages = newCharImages.filter(img => img !== null);
+    if (validImages.length === 0) { showToast('请至少上传一张参考图', 'error'); return; }
+    
+    const btn = document.getElementById('btn-save-char');
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+    
+    try {
+        const resp = await fetch('/api/characters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, images: validImages })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(`人物「${name}」已保存`, 'success');
+            cancelCreateCharacter();
+            loadCharacters();
+        } else {
+            showToast('保存失败: ' + data.error, 'error');
+        }
+    } catch(e) {
+        showToast('保存失败: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '💾 保存人物';
+    }
+}

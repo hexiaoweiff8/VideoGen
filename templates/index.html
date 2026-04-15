@@ -10,8 +10,36 @@
 <body>
     <div class="container">
         <header>
-            <h1>🎬 通义万相2.7 视频生成器</h1>
-            <p class="subtitle">文生图→图文生视频，两阶段智能创作</p>
+            <div class="header-main">
+                <div>
+                    <h1>🎬 通义万相2.7 视频生成器</h1>
+                    <p class="subtitle">文生图→图文生视频，两阶段智能创作</p>
+                </div>
+                <button class="btn-settings" onclick="toggleSettings()" title="API 设置">⚙️ 设置</button>
+            </div>
+
+            <!-- API 设置面板 -->
+            <div class="settings-panel" id="settings-panel" style="display:none;">
+                <div class="settings-grid">
+                    <div class="settings-field">
+                        <label>🗝️ 文生图 API Key</label>
+                        <input type="password" id="cfg-image-key" placeholder="sk-xxx（留空则使用服务器默认）" oninput="saveSettings()">
+                    </div>
+                    <div class="settings-field">
+                        <label>🗝️ 图生视频 API Key</label>
+                        <input type="password" id="cfg-video-key" placeholder="sk-xxx（留空则使用服务器默认）" oninput="saveSettings()">
+                    </div>
+                    <div class="settings-field settings-field-wide">
+                        <label>🌐 API Base URL</label>
+                        <input type="text" id="cfg-base-url" placeholder="https://dashscope.aliyuncs.com（留空则使用默认）" oninput="saveSettings()">
+                        <span class="settings-hint">修改可切换地域（如新加坡 dashscope-intl.aliyuncs.com）</span>
+                    </div>
+                </div>
+                <div class="settings-actions">
+                    <button class="btn btn-sm btn-danger" onclick="clearSettings()">&#x1F5D1; 清除设置</button>
+                    <span class="settings-save-tip" id="settings-save-tip"></span>
+                </div>
+            </div>
         </header>
 
         <!-- 流程说明 -->
@@ -36,22 +64,108 @@
 
                 <!-- 人物参考图上传区 -->
                 <div class="card">
-                    <h3>📷 人物参考图 (可选)</h3>
-                    <p class="hint">上传参考图片以保障人物一致性</p>
+                    <h3>📷 人物参考图 <span style="color:#999;font-size:.9em;font-weight:normal">(可选，最多3张)</span></h3>
+                    <p class="hint">可上传最多 3 张参考图，在描述中用“图1的人物”、“图2的人物”来分别引用每个参考图</p>
                     
-                    <div class="reference-upload-area">
-                        <div class="upload-slots single-image">
-                            <div class="upload-slot" data-type="reference">
-                                <div class="slot-label">参考图</div>
-                                <div class="upload-box" onclick="document.getElementById('ref-image').click()">
-                                    <img class="preview-img" id="preview-reference" style="display:none;">
-                                    <div class="upload-placeholder">
-                                        <span class="upload-icon">+</span>
-                                        <span>点击上传参考图</span>
-                                    </div>
+                    <div class="upload-slots" id="ref-slots">
+                        <!-- 插槽 0 -->
+                        <div class="upload-slot" id="ref-slot-0">
+                            <div class="slot-label">参考图 1</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-0').click()">
+                                <img class="preview-img" id="preview-ref-0" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-0">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
                                 </div>
-                                <input type="file" id="ref-image" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 'reference')">
+                                <button class="ref-clear-btn" id="clear-ref-0" onclick="clearRefImage(event,0)" style="display:none;">×</button>
                             </div>
+                            <input type="file" id="ref-image-0" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 0)">
+                        </div>
+                        <!-- 插槽 1 -->
+                        <div class="upload-slot" id="ref-slot-1">
+                            <div class="slot-label">参考图 2</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-1').click()">
+                                <img class="preview-img" id="preview-ref-1" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-1">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
+                                </div>
+                                <button class="ref-clear-btn" id="clear-ref-1" onclick="clearRefImage(event,1)" style="display:none;">×</button>
+                            </div>
+                            <input type="file" id="ref-image-1" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 1)">
+                        </div>
+                        <!-- 插槽 2 -->
+                        <div class="upload-slot" id="ref-slot-2">
+                            <div class="slot-label">参考图 3</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-2').click()">
+                                <img class="preview-img" id="preview-ref-2" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-2">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
+                                </div>
+                                <button class="ref-clear-btn" id="clear-ref-2" onclick="clearRefImage(event,2)" style="display:none;">×</button>
+                            </div>
+                            <input type="file" id="ref-image-2" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 2)">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 人物库 -->
+                <div class="card" id="character-library-card">
+                    <div class="char-lib-header">
+                        <h3>👤 人物库</h3>
+                        <button class="btn btn-sm btn-primary" onclick="openCreateCharacter()">
+                            + 新建人物
+                        </button>
+                    </div>
+                    <p class="hint">选择人物将自动将其参考图加载到上方插槽</p>
+
+                    <!-- 人物列表 -->
+                    <div class="char-list" id="char-list">
+                        <div class="char-empty" id="char-empty">暂无人物，点击“+ 新建人物”添加</div>
+                    </div>
+
+                    <!-- 新建人物表单（默认隐藏） -->
+                    <div class="create-char-form" id="create-char-form" style="display:none;">
+                        <div class="form-group">
+                            <label>人物名称 <span class="required">*</span></label>
+                            <input type="text" id="new-char-name" placeholder="输入人物名称..." maxlength="20">
+                        </div>
+                        <div class="form-group">
+                            <label>参考图（最多3张）</label>
+                            <div class="upload-slots" id="create-char-slots">
+                                <!-- 插槽 0 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-0').click()">
+                                        <img class="preview-img" id="new-char-preview-0" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-0"><span class="upload-icon">+</span><span>上传1</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-0" onclick="clearNewCharImg(event,0)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-0" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,0)">
+                                </div>
+                                <!-- 插槽 1 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-1').click()">
+                                        <img class="preview-img" id="new-char-preview-1" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-1"><span class="upload-icon">+</span><span>上传2</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-1" onclick="clearNewCharImg(event,1)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-1" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,1)">
+                                </div>
+                                <!-- 插槽 2 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-2').click()">
+                                        <img class="preview-img" id="new-char-preview-2" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-2"><span class="upload-icon">+</span><span>上传3</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-2" onclick="clearNewCharImg(event,2)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-2" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,2)">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="create-char-actions">
+                            <button class="btn btn-sm btn-secondary" onclick="cancelCreateCharacter()">取消</button>
+                            <button class="btn btn-sm btn-primary" onclick="saveCharacter()" id="btn-save-char">💾 保存人物</button>
                         </div>
                     </div>
                 </div>

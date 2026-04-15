@@ -41,6 +41,222 @@ header {
     margin-bottom: 30px;
 }
 
+.header-main {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    position: relative;
+}
+
+.btn-settings {
+    position: absolute;
+    right: 0;
+    top: 6px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 6px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background 0.2s;
+}
+.btn-settings:hover { background: rgba(255,255,255,0.25); }
+
+/* 设置面板 */
+.settings-panel {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    padding: 18px 24px;
+    margin-top: 16px;
+    backdrop-filter: blur(8px);
+}
+
+.settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 20px;
+}
+
+.settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.settings-field-wide {
+    grid-column: 1 / -1;
+}
+
+.settings-field label {
+    color: rgba(255,255,255,0.85);
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+.settings-field input {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: white;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 0.9em;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.settings-field input::placeholder { color: rgba(255,255,255,0.4); }
+.settings-field input:focus {
+    outline: none;
+    border-color: rgba(255,255,255,0.6);
+    background: rgba(255,255,255,0.2);
+}
+
+.settings-hint {
+    font-size: 0.78em;
+    color: rgba(255,255,255,0.5);
+}
+
+.settings-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.settings-save-tip {
+    font-size: 0.82em;
+    color: rgba(255,255,255,0.6);
+}
+
+.btn-danger {
+    background: rgba(220, 53, 69, 0.75);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: background 0.2s;
+}
+.btn-danger:hover { background: rgba(220, 53, 69, 0.95); }
+
+/* ==================== 人物库 ==================== */
+.char-lib-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.char-lib-header h3 { margin: 0; }
+
+.char-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 40px;
+    padding: 4px 0;
+}
+
+.char-empty {
+    width: 100%;
+    text-align: center;
+    color: #aaa;
+    font-size: 0.85em;
+    padding: 10px 0;
+}
+
+.char-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px 6px 6px;
+    background: rgba(100,110,200,0.08);
+    border: 1.5px solid rgba(100,110,200,0.15);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    max-width: 160px;
+}
+
+.char-card:hover {
+    background: rgba(100,110,200,0.18);
+    border-color: rgba(100,110,200,0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(100,110,200,0.2);
+}
+
+.char-card-selected {
+    background: rgba(100,110,200,0.25) !important;
+    border-color: #6472c8 !important;
+    box-shadow: 0 0 0 2px rgba(100,110,200,0.3);
+}
+
+.char-thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: #e0e4f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.char-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.char-thumb-placeholder { font-size: 20px; }
+
+.char-info {
+    flex: 1;
+    min-width: 0;
+}
+.char-name {
+    font-weight: 600;
+    font-size: 0.88em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.char-meta { font-size: 0.76em; color: #888; }
+
+.char-delete-btn {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 18px;
+    height: 18px;
+    background: rgba(200,50,50,0.8);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.char-card:hover .char-delete-btn { opacity: 1; }
+
+/* 新建人物表单 */
+.create-char-form {
+    border-top: 1px solid rgba(0,0,0,0.08);
+    margin-top: 12px;
+    padding-top: 12px;
+}
+
+.create-char-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
 header h1 {
     font-size: 2.5em;
     margin-bottom: 10px;
@@ -533,6 +749,31 @@ header h1 {
     cursor: pointer;
     transition: all 0.3s;
     overflow: hidden;
+}
+
+/* 参考图插槽的清除按钮 */
+.ref-clear-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: white;
+    border: none;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    transition: background 0.2s;
+}
+
+.ref-clear-btn:hover {
+    background: rgba(220, 50, 50, 0.85);
 }
 
 .upload-box:hover {

@@ -3,10 +3,12 @@
 实现文生图和图生视频的完整流程
 """
 import os
+import json
 import time
 import uuid
 import base64
 import requests
+from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from config import (
     IMAGE_API_URL, VIDEO_API_URL, TASK_QUERY_URL,
@@ -19,8 +21,28 @@ from config import (
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 最大上传50MB
 
+# 人物库存储文件
+CHARACTERS_FILE = os.path.join(os.path.dirname(__file__), 'characters.json')
 
-def generate_image(prompt, negative_prompt="", size="2K", reference_images=None):
+
+def load_characters():
+    """从文件加载人物库"""
+    if not os.path.exists(CHARACTERS_FILE):
+        return []
+    try:
+        with open(CHARACTERS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_characters(characters):
+    """保存人物库到文件"""
+    with open(CHARACTERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(characters, f, ensure_ascii=False, indent=2)
+
+
+def generate_image(prompt, negative_prompt="", size="2K", reference_images=None, api_key=None, api_url=None):
     """
     调用文生图API生成图片
     
@@ -29,10 +51,14 @@ def generate_image(prompt, negative_prompt="", size="2K", reference_images=None)
         negative_prompt: 反向提示词
         size: 图片尺寸 (1K, 2K, 4K)
         reference_images: 参考图片URL列表 (用于人物一致性)
+        api_key: 可选，覆盖默认IMAGE_API_KEY
+        api_url: 可选，覆盖默认IMAGE_API_URL
     
     Returns:
         dict: {'success': bool, 'image_url': str, 'local_path': str, 'error': str}
     """
+    _api_key = api_key or IMAGE_API_KEY
+    _api_url = api_url or IMAGE_API_URL
     try:
         # 构建content数组
         content = []
@@ -64,16 +90,19 @@ def generate_image(prompt, negative_prompt="", size="2K", reference_images=None)
             }
         }
         
-        # 如果有反向提示词,可以通过其他方式处理(文生图API不直接支持negative_prompt)
-        # 可以在prompt中添加负面描述
+        # 如果有参考图输入，关闭thinking_mode（有图时不生效）
+        if reference_images:
+            payload["parameters"]["thinking_mode"] = False
         
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {IMAGE_API_KEY}"
+            "Authorization": f"Bearer {_api_key}"
         }
         
         print(f"[文生图] 调用API, prompt: {prompt[:50]}...")
-        response = requests.post(IMAGE_API_URL, json=payload, headers=headers, timeout=120)
+        if api_key:
+            print(f"[文生图] 使用页面自定义API Key")
+        response = requests.post(_api_url, json=payload, headers=headers, timeout=120)
         response.raise_for_status()
         result = response.json()
         
@@ -126,7 +155,7 @@ def download_image(image_url, filename):
         raise
 
 
-def create_video_task(image_url, prompt, negative_prompt="", resolution="720P", duration=5):
+def create_video_task(image_url, prompt, negative_prompt="", resolution="720P", duration=5, api_key=None, api_url=None):
     """
     创建图生视频任务 - 使用 wan2.7-i2v 模型
     
@@ -136,10 +165,14 @@ def create_video_task(image_url, prompt, negative_prompt="", resolution="720P", 
         negative_prompt: 反向提示词
         resolution: 分辨率 (720P, 1080P)
         duration: 视频时长(秒)，取値范围 2-15
+        api_key: 可选，覆盖默认VIDEO_API_KEY
+        api_url: 可选，覆盖默认VIDEO_API_URL
     
     Returns:
         dict: {'success': bool, 'task_id': str, 'error': str}
     """
+    _api_key = api_key or VIDEO_API_KEY
+    _api_url = api_url or VIDEO_API_URL
     try:
         # wan2.7-i2v 使用新版 media 数组格式
         payload = {
@@ -167,7 +200,7 @@ def create_video_task(image_url, prompt, negative_prompt="", resolution="720P", 
         
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {VIDEO_API_KEY}",
+            "Authorization": f"Bearer {_api_key}",
             "X-DashScope-Async": "enable"  # 异步模式必须启用
         }
         
@@ -179,8 +212,10 @@ def create_video_task(image_url, prompt, negative_prompt="", resolution="720P", 
         print(f"[图生视频] 创建任务 (wan2.7-i2v), prompt: {prompt[:50]}...")
         print(f"[图生视频] 参数: resolution={resolution}, duration={duration}")
         print(f"[图生视频] 图片URL: {image_url[:100]}...")
+        if api_key:
+            print(f"[图生视频] 使用页面自定义API Key")
         
-        response = requests.post(VIDEO_API_URL, json=payload, headers=headers, timeout=60)
+        response = requests.post(_api_url, json=payload, headers=headers, timeout=60)
         
         print(f"[图生视频] 响应状态码: {response.status_code}")
         print(f"[图生视频] 响应内容: {response.text}")
@@ -353,12 +388,20 @@ def api_generate_image():
         negative_prompt = data.get('negative_prompt', '').strip()
         size = data.get('size', '2K')
         reference_images = data.get('reference_images', [])
+        # 接收页面传入的API配置（覆盖默认）
+        page_api_key = data.get('api_key', '').strip() or None
+        page_base_url = data.get('base_url', '').strip() or None
+        # 如果提供了base_url，拼接具体接口路径
+        page_api_url = None
+        if page_base_url:
+            page_api_url = page_base_url.rstrip('/') + '/api/v1/services/aigc/multimodal-generation/generation'
         
         if not prompt:
             return jsonify({"success": False, "error": "请输入图片描述"}), 400
         
         # 调用文生图API
-        result = generate_image(prompt, negative_prompt, size, reference_images)
+        result = generate_image(prompt, negative_prompt, size, reference_images,
+                                api_key=page_api_key, api_url=page_api_url)
         
         if result["success"]:
             return jsonify({
@@ -384,12 +427,19 @@ def api_generate_video():
         negative_prompt = data.get('negative_prompt', '').strip()
         resolution = data.get('resolution', '720P')
         duration = data.get('duration', 5)
+        # 接收页面传入的API配置
+        page_api_key = data.get('api_key', '').strip() or None
+        page_base_url = data.get('base_url', '').strip() or None
+        page_api_url = None
+        if page_base_url:
+            page_api_url = page_base_url.rstrip('/') + '/api/v1/services/aigc/text-2-video-synthesis/video-synthesis'
         
         if not image_url or not prompt:
             return jsonify({"success": False, "error": "缺少必要参数"}), 400
         
         # 创建视频生成任务
-        result = create_video_task(image_url, prompt, negative_prompt, resolution, duration)
+        result = create_video_task(image_url, prompt, negative_prompt, resolution, duration,
+                                   api_key=page_api_key, api_url=page_api_url)
         
         if result["success"]:
             return jsonify({
@@ -576,6 +626,89 @@ def serve_image(filename):
 def serve_video(filename):
     """提供视频文件访问"""
     return send_from_directory(VIDEO_SAVE_DIR, filename)
+
+
+# ==================== 人物库接口 ====================
+
+@app.route('/api/characters', methods=['GET'])
+def api_get_characters():
+    """获取人物库列表"""
+    characters = load_characters()
+    # 返回时不包含完整base64（列表页只需要缩略图）
+    result = []
+    for char in characters:
+        result.append({
+            'id': char['id'],
+            'name': char['name'],
+            'created_at': char.get('created_at', ''),
+            'image_count': len(char.get('images', [])),
+            'thumbnail': char['images'][0]['base64_url'] if char.get('images') else None
+        })
+    return jsonify({'success': True, 'characters': result})
+
+
+@app.route('/api/characters/<char_id>', methods=['GET'])
+def api_get_character(char_id):
+    """获取单个人物详情（含完整base64）"""
+    characters = load_characters()
+    char = next((c for c in characters if c['id'] == char_id), None)
+    if not char:
+        return jsonify({'success': False, 'error': '人物不存在'}), 404
+    return jsonify({'success': True, 'character': char})
+
+
+@app.route('/api/characters', methods=['POST'])
+def api_create_character():
+    """创建新人物"""
+    try:
+        data = request.json
+        name = data.get('name', '').strip()
+        images = data.get('images', [])  # [{filename, base64_url}]
+        
+        if not name:
+            return jsonify({'success': False, 'error': '请输入人物名称'}), 400
+        if not images:
+            return jsonify({'success': False, 'error': '请至少上传一张参考图'}), 400
+        
+        characters = load_characters()
+        
+        # 检查名称是否重复
+        if any(c['name'] == name for c in characters):
+            return jsonify({'success': False, 'error': f'人物“{name}”已存在'}), 400
+        
+        new_char = {
+            'id': uuid.uuid4().hex[:12],
+            'name': name,
+            'images': images,
+            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M')
+        }
+        characters.append(new_char)
+        save_characters(characters)
+        
+        return jsonify({
+            'success': True,
+            'character': {
+                'id': new_char['id'],
+                'name': new_char['name'],
+                'created_at': new_char['created_at'],
+                'image_count': len(images),
+                'thumbnail': images[0]['base64_url'] if images else None
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'创建失败: {str(e)}'}), 500
+
+
+@app.route('/api/characters/<char_id>', methods=['DELETE'])
+def api_delete_character(char_id):
+    """删除人物"""
+    characters = load_characters()
+    original_len = len(characters)
+    characters = [c for c in characters if c['id'] != char_id]
+    if len(characters) == original_len:
+        return jsonify({'success': False, 'error': '人物不存在'}), 404
+    save_characters(characters)
+    return jsonify({'success': True})
 
 
 if __name__ == '__main__':
