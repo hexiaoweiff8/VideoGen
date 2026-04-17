@@ -1226,6 +1226,42 @@ header h1 {
     font-weight: 600;
 }
 
+.scene-duration-badge {
+    background: rgba(250,140,22,0.12);
+    color: #ad6800;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* 分镜衔接横幅 */
+.scene-transition-banner {
+    background: linear-gradient(90deg, #e8f4fd 0%, #f0f7ff 50%, #e8f4fd 100%);
+    border: 1px dashed #91caff;
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.transition-icon {
+    font-size: 18px;
+    color: #1677ff;
+}
+.transition-text {
+    font-size: 13px;
+    color: #4a6fa5;
+    line-height: 1.5;
+}
+
+/* 音效区块 */
+.prompt-block-sound .prompt-textarea-sound {
+    background: #fffbf0;
+    border-color: #ffd591;
+}
+
 .scene-card-title {
     font-size: 1.15em;
     font-weight: 700;

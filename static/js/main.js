@@ -5,12 +5,12 @@ let currentVideoFilename = null;
 let videoSourceImageUrl = null;    // 右侧视频生成使用的图片URL
 let lastGeneratedImageUrl = null;  // 左侧最近生成的图片URL（公网可访问）
 let lastGeneratedImageFilename = null; // 左侧最近生成图片的文件名
-let referenceImageUrls = [null, null, null]; // 左侧文生图使用的参考图Base64 URL，最多3张
+let referenceImageUrls = [null, null, null, null, null, null, null, null, null]; // 左侧文生图使用的参考图Base64 URL，最多9张
 let pollTimer = null;
 let pollStartTime = null;
 
 // 新建人物表单中的临时图片数据 [{filename, base64_url}, ...]
-let newCharImages = [null, null, null];
+let newCharImages = [null, null, null, null, null, null, null, null, null];
 // 当前已选中的人物ID数组（支持多选）
 let selectedCharIds = [];
 // 人物数据缓存 { charId: characterObject }
@@ -919,7 +919,7 @@ async function selectCharacter(charId) {
  */
 function reloadRefSlotsFromChars() {
     // 清除全部插槽
-    for (let i = 0; i < 3; i++) clearRefImage(null, i);
+    for (let i = 0; i < 9; i++) clearRefImage(null, i);
 
     if (selectedCharIds.length === 0) {
         showToast('已取消所有人物选择', 'info');
@@ -933,11 +933,11 @@ function reloadRefSlotsFromChars() {
         if (char && char.images) allImages.push(...char.images);
     });
 
-    if (allImages.length > 3) {
-        showToast(`参考图共${allImages.length}张，插槽上限为3，取前3张`, 'info');
+    if (allImages.length > 9) {
+        showToast(`参考图共${allImages.length}张，插槽上限为9，取前9张`, 'info');
     }
 
-    allImages.slice(0, 3).forEach((img, i) => {
+    allImages.slice(0, 9).forEach((img, i) => {
         referenceImageUrls[i] = img.base64_url;
         const preview = document.getElementById(`preview-ref-${i}`);
         const placeholder = document.getElementById(`placeholder-ref-${i}`);
@@ -949,7 +949,7 @@ function reloadRefSlotsFromChars() {
     });
 
     const names = selectedCharIds.map(id => selectedCharsCache[id]?.name).filter(Boolean).join('、');
-    showToast(`已加载「${names}」共${Math.min(allImages.length, 3)}张参考图`, 'success');
+    showToast(`已加载「${names}」共${Math.min(allImages.length, 9)}张参考图`, 'success');
 }
 
 
@@ -1044,15 +1044,41 @@ function renderScenes(data) {
         return;
     }
 
-    scenes.forEach(scene => {
+    scenes.forEach((scene, idx) => {
+        // === 格式兼容：确保 transition 是字符串 ===
+        let transitionText = scene.transition || '';
+        if (typeof transitionText === 'object') {
+            const parts = [transitionText.type, transitionText.logic, transitionText.emotion].filter(Boolean);
+            transitionText = parts.join('——');
+        }
+
         const card = document.createElement('div');
         card.className = 'scene-card';
+
+        // 衔接提示（非第一个分镜）
+        let transitionHtml = '';
+        if (idx > 0 && transitionText) {
+            transitionHtml = `
+            <div class="scene-transition-banner">
+                <span class="transition-icon">⇣</span>
+                <span class="transition-text">衔接：${transitionText}</span>
+            </div>`;
+        }
+
+        // 时长与节奏
+        let durationHtml = '';
+        if (scene.duration) {
+            durationHtml = `<span class="scene-duration-badge">⏱ ${scene.duration}</span>`;
+        }
+
         card.innerHTML = `
+            ${transitionHtml}
             <div class="scene-card-header">
                 <div class="scene-card-meta">
                     <span class="scene-num-badge">分镜 ${scene.scene_number}</span>
                     <span class="scene-shot-badge">${scene.shot_type || ''}</span>
                     <span class="scene-mood-badge">${scene.mood || ''}</span>
+                    ${durationHtml}
                 </div>
                 <div class="scene-card-title">${scene.scene_title}</div>
             </div>
@@ -1063,7 +1089,7 @@ function renderScenes(data) {
                     <span>🖼️ 文生图提示词</span>
                     <button class="btn-copy" onclick="copyText(this, 'img-prompt-${scene.scene_number}')">&#x2398; 复制</button>
                 </div>
-                <textarea class="prompt-textarea" id="img-prompt-${scene.scene_number}" rows="4">${scene.image_prompt}</textarea>
+                <textarea class="prompt-textarea" id="img-prompt-${scene.scene_number}" rows="6">${scene.image_prompt}</textarea>
             </div>
 
             <div class="prompt-block">
@@ -1071,7 +1097,7 @@ function renderScenes(data) {
                     <span>🎬 视频提示词</span>
                     <button class="btn-copy" onclick="copyText(this, 'vid-prompt-${scene.scene_number}')">&#x2398; 复制</button>
                 </div>
-                <textarea class="prompt-textarea" id="vid-prompt-${scene.scene_number}" rows="3">${scene.video_prompt}</textarea>
+                <textarea class="prompt-textarea" id="vid-prompt-${scene.scene_number}" rows="5">${scene.video_prompt}</textarea>
             </div>
 
             <button class="btn btn-sm btn-success btn-send-to-studio"
@@ -1155,8 +1181,8 @@ async function deleteCharacter(charId, charName) {
 function openCreateCharacter() {
     // 重置表单
     document.getElementById('new-char-name').value = '';
-    newCharImages = [null, null, null];
-    for (let i = 0; i < 3; i++) {
+    newCharImages = [null, null, null, null, null, null, null, null, null];
+    for (let i = 0; i < 9; i++) {
         const preview = document.getElementById(`new-char-preview-${i}`);
         const ph = document.getElementById(`new-char-ph-${i}`);
         const clearBtn = document.getElementById(`new-char-clear-${i}`);
@@ -1175,7 +1201,7 @@ function openCreateCharacter() {
  */
 function cancelCreateCharacter() {
     document.getElementById('create-char-form').style.display = 'none';
-    newCharImages = [null, null, null];
+    newCharImages = [null, null, null, null, null, null, null, null, null];
 }
 
 /**

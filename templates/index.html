@@ -48,7 +48,7 @@
                 🎨 创作工作台
             </button>
             <button class="tab-btn" data-tab="storyboard" onclick="switchTab('storyboard')">
-                🋏️ 分镜规划
+                ✂️ 分镜规划
             </button>
         </div>
 
@@ -75,8 +75,8 @@
 
                 <!-- 人物参考图上传区 -->
                 <div class="card">
-                    <h3>📷 人物参考图 <span style="color:#999;font-size:.9em;font-weight:normal">(可选，最多3张)</span></h3>
-                    <p class="hint">可上传最多 3 张参考图，在描述中用“图1的人物”、“图2的人物”来分别引用每个参考图</p>
+                    <h3>📷 人物参考图 <span style="color:#999;font-size:.9em;font-weight:normal">(可选，最多9张)</span></h3>
+                    <p class="hint">可上传最多 9 张参考图，在描述中用“图1的人物”、“图2的人物”来分别引用每个参考图</p>
                     
                     <div class="upload-slots" id="ref-slots">
                         <!-- 插槽 0 -->
@@ -118,6 +118,84 @@
                             </div>
                             <input type="file" id="ref-image-2" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 2)">
                         </div>
+                        <!-- 插槽 3 -->
+                        <div class="upload-slot" id="ref-slot-3">
+                            <div class="slot-label">参考图 4</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-3').click()">
+                                <img class="preview-img" id="preview-ref-3" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-3">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
+                                </div>
+                                <button class="ref-clear-btn" id="clear-ref-3" onclick="clearRefImage(event,3)" style="display:none;">×</button>
+                            </div>
+                            <input type="file" id="ref-image-3" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 3)">
+                        </div>
+                        <!-- 插槽 4 -->
+                        <div class="upload-slot" id="ref-slot-4">
+                            <div class="slot-label">参考图 5</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-4').click()">
+                                <img class="preview-img" id="preview-ref-4" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-4">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
+                                </div>
+                                <button class="ref-clear-btn" id="clear-ref-4" onclick="clearRefImage(event,4)" style="display:none;">×</button>
+                            </div>
+                            <input type="file" id="ref-image-4" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 4)">
+                        </div>
+                        <!-- 插槽 5 -->
+                        <div class="upload-slot" id="ref-slot-5">
+                            <div class="slot-label">参考图 6</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-5').click()">
+                                <img class="preview-img" id="preview-ref-5" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-5">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
+                                </div>
+                                <button class="ref-clear-btn" id="clear-ref-5" onclick="clearRefImage(event,5)" style="display:none;">×</button>
+                            </div>
+                            <input type="file" id="ref-image-5" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 5)">
+                        </div>
+                        <!-- 插槽 6 -->
+                        <div class="upload-slot" id="ref-slot-6">
+                            <div class="slot-label">参考图 7</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-6').click()">
+                                <img class="preview-img" id="preview-ref-6" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-6">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
+                                </div>
+                                <button class="ref-clear-btn" id="clear-ref-6" onclick="clearRefImage(event,6)" style="display:none;">×</button>
+                            </div>
+                            <input type="file" id="ref-image-6" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 6)">
+                        </div>
+                        <!-- 插槽 7 -->
+                        <div class="upload-slot" id="ref-slot-7">
+                            <div class="slot-label">参考图 8</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-7').click()">
+                                <img class="preview-img" id="preview-ref-7" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-7">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
+                                </div>
+                                <button class="ref-clear-btn" id="clear-ref-7" onclick="clearRefImage(event,7)" style="display:none;">×</button>
+                            </div>
+                            <input type="file" id="ref-image-7" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 7)">
+                        </div>
+                        <!-- 插槽 8 -->
+                        <div class="upload-slot" id="ref-slot-8">
+                            <div class="slot-label">参考图 9</div>
+                            <div class="upload-box" onclick="document.getElementById('ref-image-8').click()">
+                                <img class="preview-img" id="preview-ref-8" style="display:none;">
+                                <div class="upload-placeholder" id="placeholder-ref-8">
+                                    <span class="upload-icon">+</span>
+                                    <span>点击上传</span>
+                                </div>
+                                <button class="ref-clear-btn" id="clear-ref-8" onclick="clearRefImage(event,8)" style="display:none;">×</button>
+                            </div>
+                            <input type="file" id="ref-image-8" accept="image/*" style="display:none;" onchange="handleReferenceUpload(this, 8)">
+                        </div>
                     </div>
                 </div>
 
@@ -143,7 +221,7 @@
                             <input type="text" id="new-char-name" placeholder="输入人物名称..." maxlength="20">
                         </div>
                         <div class="form-group">
-                            <label>参考图（最多3张）</label>
+                            <label>参考图（最多9张）</label>
                             <div class="upload-slots" id="create-char-slots">
                                 <!-- 插槽 0 -->
                                 <div class="upload-slot">
@@ -171,6 +249,60 @@
                                         <button class="ref-clear-btn" id="new-char-clear-2" onclick="clearNewCharImg(event,2)" style="display:none;">×</button>
                                     </div>
                                     <input type="file" id="new-char-img-2" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,2)">
+                                </div>
+                                <!-- 插槽 3 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-3').click()">
+                                        <img class="preview-img" id="new-char-preview-3" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-3"><span class="upload-icon">+</span><span>上传4</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-3" onclick="clearNewCharImg(event,3)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-3" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,3)">
+                                </div>
+                                <!-- 插槽 4 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-4').click()">
+                                        <img class="preview-img" id="new-char-preview-4" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-4"><span class="upload-icon">+</span><span>上传5</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-4" onclick="clearNewCharImg(event,4)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-4" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,4)">
+                                </div>
+                                <!-- 插槽 5 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-5').click()">
+                                        <img class="preview-img" id="new-char-preview-5" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-5"><span class="upload-icon">+</span><span>上传6</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-5" onclick="clearNewCharImg(event,5)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-5" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,5)">
+                                </div>
+                                <!-- 插槽 6 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-6').click()">
+                                        <img class="preview-img" id="new-char-preview-6" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-6"><span class="upload-icon">+</span><span>上传7</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-6" onclick="clearNewCharImg(event,6)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-6" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,6)">
+                                </div>
+                                <!-- 插槽 7 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-7').click()">
+                                        <img class="preview-img" id="new-char-preview-7" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-7"><span class="upload-icon">+</span><span>上传8</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-7" onclick="clearNewCharImg(event,7)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-7" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,7)">
+                                </div>
+                                <!-- 插槽 8 -->
+                                <div class="upload-slot">
+                                    <div class="upload-box" onclick="document.getElementById('new-char-img-8').click()">
+                                        <img class="preview-img" id="new-char-preview-8" style="display:none;">
+                                        <div class="upload-placeholder" id="new-char-ph-8"><span class="upload-icon">+</span><span>上传9</span></div>
+                                        <button class="ref-clear-btn" id="new-char-clear-8" onclick="clearNewCharImg(event,8)" style="display:none;">×</button>
+                                    </div>
+                                    <input type="file" id="new-char-img-8" accept="image/*" style="display:none;" onchange="handleNewCharImg(this,8)">
                                 </div>
                             </div>
                         </div>
@@ -339,7 +471,7 @@
                 <!-- 左侧：输入区 -->
                 <div class="storyboard-input-panel">
                     <div class="card">
-                        <h3>🋏️ 场景描述</h3>
+                        <h3>✂️ 场景描述</h3>
                         <p class="hint">输入整体故事或场景，AI 会按分镜脚本师的思维自动拆分，生成文生图 + 图文生视频双组提示词</p>
                         <div class="form-group">
                             <label for="scene-description">场景 / 故事描述 <span class="required">*</span></label>
@@ -356,6 +488,7 @@
                                     <option value="纪录片自然">🌿 纪录片自然</option>
                                     <option value="黑色电影">🔮 黑色电影</option>
                                     <option value="日系动漯">✨ 日系动漯</option>
+                                    <option value="动画风格">🎬 动画风格</option>
                                 </select>
                             </div>
                             <div class="form-group" style="flex:1">
