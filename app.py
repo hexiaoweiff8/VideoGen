@@ -11,12 +11,14 @@ import requests
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from config import (
-    IMAGE_API_URL, VIDEO_API_URL, TASK_QUERY_URL,
+    WANX_IMAGE_API_URL, WANX_VIDEO_API_URL, WANX_TASK_QUERY_URL,
+    VOLC_ACCESS_KEY, VOLC_SECRET_KEY, MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET, MINIO_CUSTOM_DOMAIN,
     IMAGE_API_KEY, VIDEO_API_KEY, QWEN_API_KEY, QWEN_API_URL,
     POLL_INTERVAL, POLL_TIMEOUT,
     IMAGE_SAVE_DIR, VIDEO_SAVE_DIR,
     FLASK_HOST, FLASK_PORT, FLASK_DEBUG
 )
+from volcengine.visual.VisualService import VisualService
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 最大上传50MB
@@ -42,7 +44,7 @@ def save_characters(characters):
         json.dump(characters, f, ensure_ascii=False, indent=2)
 
 
-def generate_image(prompt, negative_prompt="", size="2K", reference_images=None, api_key=None, api_url=None):
+def generate_image(prompt, negative_prompt="", size="2K", reference_images=None, api_key=None, api_url=None, model="wanx"):
     """
     调用文生图API生成图片
     
@@ -53,12 +55,21 @@ def generate_image(prompt, negative_prompt="", size="2K", reference_images=None,
         reference_images: 参考图片URL列表 (用于人物一致性)
         api_key: 可选，覆盖默认IMAGE_API_KEY
         api_url: 可选，覆盖默认IMAGE_API_URL
+        model: 模型平台 (wanx=通义万相, jimeng=即梦AI)
     
     Returns:
         dict: {'success': bool, 'image_url': str, 'local_path': str, 'error': str}
     """
+    if model == "jimeng":
+        return generate_image_jimeng(prompt, negative_prompt, size, reference_images, api_key)
+    else:
+        return generate_image_wanx(prompt, negative_prompt, size, reference_images, api_key, api_url)
+
+
+def generate_image_wanx(prompt, negative_prompt="", size="2K", reference_images=None, api_key=None, api_url=None):
+    """通义万相文生图"""
     _api_key = api_key or IMAGE_API_KEY
-    _api_url = api_url or IMAGE_API_URL
+    _api_url = api_url or WANX_IMAGE_API_URL
     try:
         # 构建content数组
         content = []
@@ -155,6 +166,290 @@ def download_image(image_url, filename):
         raise
 
 
+def _get_jimeng_visual_service():
+    """获取即梦AI视觉服务实例（volcengine SDK）"""
+    visual_service = VisualService()
+    visual_service.set_ak(VOLC_ACCESS_KEY)
+    visual_service.set_sk(VOLC_SECRET_KEY)
+    return visual_service
+
+
+def generate_image_jimeng(prompt, negative_prompt="", size="2K", reference_images=None, api_key=None):
+    """
+    即梦AI文生图 4.0 - 通过火山引擎视觉API（volcengine SDK）
+    
+    Args:
+        prompt: 图片描述文本
+        negative_prompt: 反向提示词
+        size: 图片尺寸 (1K, 2K, 4K)
+        reference_images: 参考图片URL列表
+        api_key: 未使用（保持接口一致）
+    
+    Returns:
+        dict: {'success': bool, 'image_url': str, 'local_path': str, 'error': str}
+    """
+    if not VOLC_ACCESS_KEY or not VOLC_SECRET_KEY:
+        return {"success": False, "error": "请先配置火山引擎 AK/SK（VOLC_ACCESS_KEY / VOLC_SECRET_KEY）"}
+    
+    # 即梦4.0 尺寸映射（宽x高）
+    size_map = {
+        "1K": {"width": 1024, "height": 1024},
+        "2K": {"width": 2048, "height": 1024},  # 16:9 近似
+        "4K": {"width": 2048, "height": 1024}
+    }
+    img_size = size_map.get(size, {"width": 1024, "height": 1024})
+    
+    try:
+        visual_service = _get_jimeng_visual_service()
+        
+        # 构建请求参数 - 即梦图片生成4.0（异步两步调用）
+        form = {
+            "req_key": "jimeng_t2i_v40",
+            "prompt": prompt,
+            "width": img_size["width"],
+            "height": img_size["height"],
+            "seed": -1,
+            "scale": 2.5,
+        }
+        
+        # 反向提示词
+        if negative_prompt:
+            form["negative_prompt"] = negative_prompt
+        
+        # 参考图片（即梦4.0支持最多10张，只接受 http/https 公网URL）
+        if reference_images:
+            valid_refs = []
+            upload_needed = []
+            for url in reference_images:
+                if not isinstance(url, str):
+                    continue
+                if url.startswith(('http://', 'https://')):
+                    valid_refs.append(url)
+                elif url.startswith('data:'):
+                    upload_needed.append(url)
+            
+            # 自动上传 base64 参考图到 MinIO 公网存储
+            if upload_needed:
+                if all([MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET]):
+                    print(f"[即梦文生图] 开始上传 {len(upload_needed)} 张参考图到MinIO...")
+                    for b64url in upload_needed:
+                        try:
+                            public_url = upload_base64_for_jimeng(b64url)
+                            valid_refs.append(public_url)
+                        except Exception as ue:
+                            print(f"[即梦文生图] 参考图上传失败（已跳过）: {ue}")
+                else:
+                    print(f"[即梦文生图] 有 {len(upload_needed)} 张base64参考图，但未配置MinIO，已跳过")
+                    print(f"[即梦文生图] 提示: 在.env中配置 MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY/MINIO_BUCKET 可启用参考图")
+            
+            if valid_refs:
+                form["image_urls"] = valid_refs[:10]
+                print(f"[即梦文生图] 参考图 {len(valid_refs)} 张 → 已加入请求")
+            else:
+                print(f"[即梦文生图] 无有效参考图，走纯文生图")
+        
+        print(f"[即梦文生图] 提交异步任务, req_key: jimeng_t2i_v40, prompt: {prompt[:50]}...")
+        # 第1步：提交任务
+        resp = visual_service.cv_sync2async_submit_task(form)
+        print(f"[即梦文生图] 提交响应 code: {resp.get('code')}")
+        
+        if resp.get('code') != 10000:
+            error_msg = resp.get('message', '未知错误')
+            print(f"[即梦文生图] 提交失败({resp.get('code')}): {error_msg}")
+            return {"success": False, "error": f"即梦API错误({resp.get('code')}): {error_msg}"}
+        
+        task_id = resp.get('data', {}).get('task_id', '')
+        if not task_id:
+            return {"success": False, "error": "API返回成功但无task_id"}
+        
+        print(f"[即梦文生图] 任务已提交, task_id: {task_id}, 开始轮询...")
+        
+        # 第2步：轮询查询结果
+        import json as json_module
+        query_form = {
+            "req_key": "jimeng_t2i_v40",
+            "task_id": task_id,
+            "req_json": json_module.dumps({"return_url": True, "logo_info": {"add_logo": False}}),
+        }
+        
+        max_wait = 120  # 最多等待120秒
+        interval = 3
+        elapsed = 0
+        while elapsed < max_wait:
+            time.sleep(interval)
+            elapsed += interval
+            
+            poll_resp = visual_service.cv_sync2async_get_result(query_form)
+            poll_code = poll_resp.get('code')
+            poll_data = poll_resp.get('data', {})
+            poll_status = poll_data.get('status', '')
+            
+            print(f"[即梦文生图] 轮询 ({elapsed}s): status={poll_status}, code={poll_code}")
+            
+            if poll_code == 10000 and poll_status == 'done':
+                # 成功 - 解析图片URL
+                image_urls = poll_data.get('image_urls', [])
+                
+                if not image_urls:
+                    b64_list = poll_data.get('binary_data_base64', [])
+                    if b64_list:
+                        local_filename = f"image_{uuid.uuid4().hex[:8]}.png"
+                        local_path = os.path.join(IMAGE_SAVE_DIR, local_filename)
+                        with open(local_path, 'wb') as f:
+                            f.write(base64.b64decode(b64_list[0]))
+                        print(f"[即梦文生图] 成功(base64), 本地路径: {local_path}")
+                        return {
+                            "success": True,
+                            "image_url": f"/images/{local_filename}",
+                            "local_path": local_path,
+                            "filename": local_filename
+                        }
+                    return {"success": False, "error": "API返回成功但无图片数据"}
+                
+                image_url = image_urls[0]
+                local_filename = f"image_{uuid.uuid4().hex[:8]}.png"
+                local_path = download_image(image_url, local_filename)
+                
+                print(f"[即梦文生图] 成功, 本地路径: {local_path}")
+                return {
+                    "success": True,
+                    "image_url": image_url,
+                    "local_path": local_path,
+                    "filename": local_filename
+                }
+            
+            elif poll_code != 10000 and poll_status not in ('generating', 'in_queue', ''):
+                error_msg = poll_resp.get('message', '未知错误')
+                return {"success": False, "error": f"即梦任务失败({poll_code}): {error_msg}"}
+        
+        return {"success": False, "error": f"即梦文生图超时({max_wait}秒)"}
+            
+    except Exception as e:
+        error_msg = f"即梦文生图出错: {str(e)}"
+        print(f"[即梦文生图] {error_msg}")
+        return {"success": False, "error": error_msg}
+
+
+def create_video_task_jimeng(image_url, prompt, negative_prompt="", duration=5):
+    """
+    即梦AI视频生成 3.0 Pro - 提交异步任务
+    
+    Args:
+        image_url: 首帧图片URL（图生视频）或 None（文生视频）
+        prompt: 视频描述文本
+        negative_prompt: 反向提示词（未使用，接口不支持）
+        duration: 视频时长(秒)，5 或 10
+    
+    Returns:
+        dict: {'success': bool, 'task_id': str, 'error': str}
+    """
+    if not VOLC_ACCESS_KEY or not VOLC_SECRET_KEY:
+        return {"success": False, "error": "请先配置火山引擎 AK/SK"}
+    
+    try:
+        visual_service = _get_jimeng_visual_service()
+        
+        # 帧数: 5秒=121帧, 10秒=241帧
+        frames = 241 if duration >= 10 else 121
+        
+        form = {
+            "req_key": "jimeng_ti2v_v30_pro",
+            "prompt": prompt,
+            "seed": -1,
+            "frames": frames,
+            "aspect_ratio": "16:9",
+        }
+        
+        # 图生视频：传入首帧图片
+        if image_url:
+            form["image_urls"] = [image_url]
+        
+        print(f"[即梦视频] 提交任务, prompt: {prompt[:50]}..., frames: {frames}")
+        if image_url:
+            print(f"[即梦视频] 首帧图片: {image_url[:80]}...")
+        
+        # 视频生成使用异步接口
+        resp = visual_service.cv_sync2async_submit_task(form)
+        
+        print(f"[即梦视频] 响应 code: {resp.get('code')}")
+        
+        if resp.get('code') == 10000:
+            task_id = resp.get('data', {}).get('task_id', '')
+            if task_id:
+                print(f"[即梦视频] 任务创建成功, task_id: {task_id}")
+                return {"success": True, "task_id": f"jimeng_{task_id}"}
+            else:
+                return {"success": False, "error": "API返回成功但无task_id"}
+        else:
+            error_msg = resp.get('message', '未知错误')
+            print(f"[即梦视频] 创建任务失败({resp.get('code')}): {error_msg}")
+            return {"success": False, "error": f"即梦API错误({resp.get('code')}): {error_msg}"}
+            
+    except Exception as e:
+        error_msg = f"创建即梦视频任务出错: {str(e)}"
+        print(f"[即梦视频] {error_msg}")
+        return {"success": False, "error": error_msg}
+
+
+def query_task_jimeng(task_id):
+    """
+    查询即梦AI视频任务状态
+    
+    Args:
+        task_id: 即梦任务ID（不含 jimeng_ 前缀）
+    
+    Returns:
+        dict: {'status': str, 'video_url': str, 'error': str}
+    """
+    try:
+        visual_service = _get_jimeng_visual_service()
+        
+        form = {
+            "req_key": "jimeng_ti2v_v30_pro",
+            "task_id": task_id,
+        }
+        
+        print(f"[即梦查询] 查询任务: {task_id}")
+        resp = visual_service.cv_sync2async_get_result(form)
+        
+        code = resp.get('code')
+        data = resp.get('data', {})
+        
+        if code == 10000:
+            status = data.get('status', '')
+            print(f"[即梦查询] 任务状态: {status}")
+            
+            # 状态映射: 即梦 -> 通用
+            status_map = {
+                'done': 'SUCCEEDED',
+                'generating': 'RUNNING',
+                'in_queue': 'PENDING',
+                'not_found': 'FAILED',
+                'expired': 'FAILED',
+            }
+            mapped_status = status_map.get(status, 'RUNNING')
+            
+            result = {"status": mapped_status}
+            
+            if status == 'done':
+                video_url = data.get('video_url', '')
+                if video_url:
+                    result["video_url"] = video_url
+                    print(f"[即梦查询] 视频URL: {video_url[:80]}...")
+            elif status in ('not_found', 'expired'):
+                result["error"] = f"任务{status}"
+            
+            return result
+        else:
+            error_msg = resp.get('message', '未知错误')
+            print(f"[即梦查询] 查询失败({code}): {error_msg}")
+            return {"status": "FAILED", "error": f"查询失败: {error_msg}"}
+            
+    except Exception as e:
+        print(f"[即梦查询] 异常: {str(e)}")
+        return {"status": "FAILED", "error": f"查询任务失败: {str(e)}"}
+
+
 def create_video_task(image_url, prompt, negative_prompt="", resolution="720P", duration=5, api_key=None, api_url=None):
     """
     创建图生视频任务 - 使用 wan2.7-i2v 模型
@@ -172,7 +467,7 @@ def create_video_task(image_url, prompt, negative_prompt="", resolution="720P", 
         dict: {'success': bool, 'task_id': str, 'error': str}
     """
     _api_key = api_key or VIDEO_API_KEY
-    _api_url = api_url or VIDEO_API_URL
+    _api_url = api_url or WANX_VIDEO_API_URL
     try:
         # wan2.7-i2v 使用新版 media 数组格式
         payload = {
@@ -258,7 +553,7 @@ def query_task_status(task_id):
         dict: {'status': str, 'video_url': str, 'error': str}
     """
     try:
-        url = TASK_QUERY_URL.format(task_id=task_id)
+        url = WANX_TASK_QUERY_URL.format(task_id=task_id)
         headers = {
             "Authorization": f"Bearer {VIDEO_API_KEY}"
         }
@@ -363,12 +658,88 @@ def upload_file_to_oss(policy_data, file_path):
 
 
 def upload_file_and_get_temp_url(file_path, model_name="wan2.7-i2v"):
-    """上传本地文件到阿里云临时存储，返回 oss:// 临时URL（有咉48小时）"""
+    """上传本地文件到阿里云临时存储，返回 oss:// 临时URL（有效48小时）"""
     print(f"[上传文件] 开始上传: {file_path}")
     policy_data = get_upload_policy(VIDEO_API_KEY, model_name)
     oss_url = upload_file_to_oss(policy_data, file_path)
     print(f"[上传文件] 成功, 临时URL: {oss_url}")
     return oss_url
+
+
+# base64 data URL → MinIO公网URL 缓存（避免重复上传同一张图）
+_minio_url_cache = {}
+
+def upload_base64_for_jimeng(base64_data_url):
+    """
+    将 base64 data URL 上传到 MinIO，返回公网 https URL。
+    需在 .env 中配置 MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY / MINIO_BUCKET。
+    结果会缓存到内存中，同一张图不会重复上传。
+    """
+    if not all([MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET]):
+        raise ValueError(
+            "参考图需要配置 MinIO。"
+            "请在 .env 文件中添加："
+            "MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY / MINIO_BUCKET / MINIO_CUSTOM_DOMAIN"
+        )
+
+    import hashlib
+    cache_key = hashlib.md5(base64_data_url[:200].encode()).hexdigest()
+    if cache_key in _minio_url_cache:
+        print(f"[MinIO] 命中缓存, URL: {_minio_url_cache[cache_key]}")
+        return _minio_url_cache[cache_key]
+
+    # 解析 data URL
+    try:
+        header, encoded = base64_data_url.split(',', 1)
+        mime_type = header.split(':')[1].split(';')[0]   # image/jpeg
+        ext = mime_type.split('/')[1] if '/' in mime_type else 'png'
+        if ext == 'jpeg':
+            ext = 'jpg'
+    except Exception:
+        encoded, mime_type, ext = base64_data_url, 'image/png', 'png'
+
+    import base64 as b64mod, io as _io
+    img_bytes = b64mod.b64decode(encoded)
+    object_name = f"jimeng_refs/{cache_key}.{ext}"
+
+    # 创建 MinIO 客户端
+    from minio import Minio
+    _endpoint = MINIO_ENDPOINT.replace('http://', '').replace('https://', '')
+    _secure   = MINIO_ENDPOINT.startswith('https://')
+    client = Minio(
+        endpoint=_endpoint,
+        access_key=MINIO_ACCESS_KEY,
+        secret_key=MINIO_SECRET_KEY,
+        secure=_secure
+    )
+
+    # 确保桶存在
+    try:
+        if not client.bucket_exists(MINIO_BUCKET):
+            client.make_bucket(MINIO_BUCKET)
+            print(f"[MinIO] 创建桶: {MINIO_BUCKET}")
+    except Exception as be:
+        print(f"[MinIO] 检查桶异常（继续尝试上传）: {be}")
+
+    # 上传
+    client.put_object(
+        bucket_name=MINIO_BUCKET,
+        object_name=object_name,
+        data=_io.BytesIO(img_bytes),
+        length=len(img_bytes),
+        content_type=mime_type
+    )
+
+    # 构造公网URL
+    if MINIO_CUSTOM_DOMAIN:
+        url = f"{MINIO_CUSTOM_DOMAIN.rstrip('/')}/{MINIO_BUCKET}/{object_name}"
+    else:
+        _proto = 'https' if _secure else 'http'
+        url = f"{_proto}://{_endpoint}/{MINIO_BUCKET}/{object_name}"
+
+    print(f"[MinIO] 上传成功: {url}")
+    _minio_url_cache[cache_key] = url
+    return url
 
 
 # ==================== Flask路由 ====================
@@ -388,6 +759,7 @@ def api_generate_image():
         negative_prompt = data.get('negative_prompt', '').strip()
         size = data.get('size', '2K')
         reference_images = data.get('reference_images', [])
+        model = data.get('model', 'wanx')  # wanx=通义万相, jimeng=即梦AI
         # 接收页面传入的API配置（覆盖默认）
         page_api_key = data.get('api_key', '').strip() or None
         page_base_url = data.get('base_url', '').strip() or None
@@ -401,7 +773,7 @@ def api_generate_image():
         
         # 调用文生图API
         result = generate_image(prompt, negative_prompt, size, reference_images,
-                                api_key=page_api_key, api_url=page_api_url)
+                                api_key=page_api_key, api_url=page_api_url, model=model)
         
         if result["success"]:
             return jsonify({
@@ -427,6 +799,7 @@ def api_generate_video():
         negative_prompt = data.get('negative_prompt', '').strip()
         resolution = data.get('resolution', '720P')
         duration = data.get('duration', 5)
+        model = data.get('model', 'wanx')  # wanx 或 jimeng
         # 接收页面传入的API配置
         page_api_key = data.get('api_key', '').strip() or None
         page_base_url = data.get('base_url', '').strip() or None
@@ -434,12 +807,18 @@ def api_generate_video():
         if page_base_url:
             page_api_url = page_base_url.rstrip('/') + '/api/v1/services/aigc/text-2-video-synthesis/video-synthesis'
         
-        if not image_url or not prompt:
-            return jsonify({"success": False, "error": "缺少必要参数"}), 400
+        if not prompt:
+            return jsonify({"success": False, "error": "缺少视频描述"}), 400
         
-        # 创建视频生成任务
-        result = create_video_task(image_url, prompt, negative_prompt, resolution, duration,
-                                   api_key=page_api_key, api_url=page_api_url)
+        if model == 'jimeng':
+            # 即梦视频生成
+            result = create_video_task_jimeng(image_url if image_url else None, prompt, negative_prompt, duration)
+        else:
+            # 通义万相视频生成
+            if not image_url:
+                return jsonify({"success": False, "error": "通义万相需要提供首帧图片"}), 400
+            result = create_video_task(image_url, prompt, negative_prompt, resolution, duration,
+                                       api_key=page_api_key, api_url=page_api_url)
         
         if result["success"]:
             return jsonify({
@@ -455,9 +834,14 @@ def api_generate_video():
 
 @app.route('/api/task/<task_id>', methods=['GET'])
 def api_query_task(task_id):
-    """查询任务状态API"""
+    """查询任务状态API - 支持通义万相和即梦"""
     try:
-        result = query_task_status(task_id)
+        # 判断是否是即梦任务
+        if task_id.startswith('jimeng_'):
+            real_task_id = task_id[7:]  # 去掉 jimeng_ 前缀
+            result = query_task_jimeng(real_task_id)
+        else:
+            result = query_task_status(task_id)
         
         print(f"[查询任务] 任务状态: {result['status']}")
         
@@ -524,7 +908,11 @@ def api_upload_image():
 
 @app.route('/api/upload-for-video', methods=['POST'])
 def api_upload_for_video():
-    """上传本地图片为视频生成使用，自动上传到阿里云临时存储并返回 oss:// URL"""
+    """上传本地图片为视频生成使用。
+    同时上传到：
+      - 阿里云DashScope临时存储(返回 oss:// URL, 供通义万相使用)
+      - MinIO公网存储(返回 https:// URL, 供即梦使用)
+    """
     try:
         if 'image' not in request.files:
             return jsonify({"success": False, "error": "没有图片文件"}), 400
@@ -539,13 +927,54 @@ def api_upload_for_video():
         file.save(filepath)
         print(f"[上传视频图片] 保存本地: {filepath}")
         
-        # 上传到阿里云临时存储，获取 oss:// URL
+        # 校验图片尺寸（wan2.7-i2v 要求最小 240x240）
+        try:
+            from PIL import Image as PILImage
+            with PILImage.open(filepath) as img:
+                w, h = img.size
+            if w < 240 or h < 240:
+                os.remove(filepath)
+                return jsonify({
+                    "success": False,
+                    "error": f"图片尺寸太小（{w}×{h}），视频生成要求最小 240×240，请换一张图片"
+                }), 400
+            print(f"[上传视频图片] 尺寸校验通过: {w}×{h}")
+        except Exception as pe:
+            print(f"[上传视频图片] 尺寸校验跳过: {pe}")
         oss_url = upload_file_and_get_temp_url(filepath, model_name="wan2.7-i2v")
+        
+        # 同时上传到MinIO，获取 https:// URL（供即梦使用）
+        https_url = None
+        if all([MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET]):
+            try:
+                import io as _io
+                from minio import Minio
+                _ep = MINIO_ENDPOINT.replace('http://', '').replace('https://', '')
+                _secure = MINIO_ENDPOINT.startswith('https://')
+                client = Minio(endpoint=_ep, access_key=MINIO_ACCESS_KEY,
+                               secret_key=MINIO_SECRET_KEY, secure=_secure)
+                object_name = f"jimeng_video_src/{filename}"
+                with open(filepath, 'rb') as fh:
+                    data = fh.read()
+                client.put_object(
+                    MINIO_BUCKET, object_name,
+                    _io.BytesIO(data), len(data),
+                    content_type=file.content_type or 'image/png'
+                )
+                if MINIO_CUSTOM_DOMAIN:
+                    https_url = f"{MINIO_CUSTOM_DOMAIN.rstrip('/')}/{MINIO_BUCKET}/{object_name}"
+                else:
+                    _proto = 'https' if _secure else 'http'
+                    https_url = f"{_proto}://{_ep}/{MINIO_BUCKET}/{object_name}"
+                print(f"[上传视频图片] MinIO URL: {https_url}")
+            except Exception as me:
+                print(f"[上传视频图片] MinIO上传失败（即梦模型无法使用首帧图）: {me}")
         
         return jsonify({
             "success": True,
             "filename": filename,
-            "oss_url": oss_url,  # 用于视频生成的临时URL
+            "oss_url": oss_url,        # 通义万相使用
+            "https_url": https_url,    # 即梦使用（若MinIO未配置则为null）
             "local_path": filepath
         })
         

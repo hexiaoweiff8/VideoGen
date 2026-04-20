@@ -2,7 +2,8 @@
 let currentTaskId = null;
 let currentImageFilename = null;
 let currentVideoFilename = null;
-let videoSourceImageUrl = null;    // 右侧视频生成使用的图片URL
+let videoSourceImageUrl = null;    // 右侧视频生成使用的图片URL（oss:// 供通义万相）
+let videoSourceHttpsUrl = null;    // MinIO公网URL，供即梦使用
 let lastGeneratedImageUrl = null;  // 左侧最近生成的图片URL（公网可访问）
 let lastGeneratedImageFilename = null; // 左侧最近生成图片的文件名
 let referenceImageUrls = [null, null, null, null, null, null, null, null, null]; // 左侧文生图使用的参考图Base64 URL，最多9张
@@ -53,51 +54,55 @@ function updateStepIndicator(step) {
 }
 
 /**
- * 更新状态显示
+ * 更新状态显示（已用面板遮罩层替代，保留函数以兼容旧调用）
  */
 function updateStatus(stage, status, taskId = null) {
-    // 使用新的任务状态栏
-    const statusBar = document.getElementById('task-status-bar');
-    statusBar.classList.add('show');
-    
-    document.getElementById('current-task-name').textContent = stage;
-    document.getElementById('current-task-status').textContent = status;
-    
-    if (taskId) {
-        document.getElementById('task-id').textContent = taskId;
-    }
-    
-    // 更新进度条
-    updateProgress(status);
+    // no-op: 状态显示已迁移至面板遮罩层
 }
 
 /**
- * 更新进度条
+ * 更新进度条（已用面板遮罩层替代，保留函数以兼容旧调用）
  */
 function updateProgress(status) {
-    const taskProgressBar = document.getElementById('task-progress-bar');
-    
-    const progressMap = {
-        'PENDING': { width: '20%', hint: '任务排队中...' },
-        'RUNNING': { width: '60%', hint: '正在生成中...' },
-        '处理中...': { width: '30%', hint: '处理中...' },
-        '创建任务中...': { width: '40%', hint: '创建任务中...' },
-        'SUCCEEDED': { width: '100%', hint: '完成!' },
-        '完成 ✓': { width: '100%', hint: '完成!' },
-        'FAILED': { width: '100%', hint: '失败' },
-        '失败 ✗': { width: '100%', hint: '失败' }
+    // no-op: 进度显示已迁移至面板遮罩层
+}
+
+/**
+ * 显示面板生成中遮罩
+ * @param {string} sectionId - 'image' 或 'video'
+ * @param {string} text - 显示文案
+ * @param {number} progressPct - 进度百分比
+ */
+function showSectionLoading(sectionId, text, progressPct = 10) {
+    const overlay = document.getElementById(`${sectionId}-loading-overlay`);
+    const textEl  = document.getElementById(`${sectionId}-loading-text`);
+    const barEl   = document.getElementById(`${sectionId}-loading-bar`);
+    if (textEl) textEl.textContent = text;
+    if (barEl)  barEl.style.width  = progressPct + '%';
+    if (overlay) overlay.style.display = 'flex';
+}
+
+/**
+ * 更新面板生成中遮罩的文案和进度
+ */
+function updateSectionLoading(sectionId, text, progressPct) {
+    const textEl = document.getElementById(`${sectionId}-loading-text`);
+    const barEl  = document.getElementById(`${sectionId}-loading-bar`);
+    if (textEl && text !== undefined)        textEl.textContent = text;
+    if (barEl  && progressPct !== undefined) barEl.style.width  = progressPct + '%';
+}
+
+/**
+ * 隐藏面板生成中遮罩
+ * @param {string} sectionId - 'image' 或 'video'
+ * @param {number} delay - 延迟毫秒数，默认0（立即隐藏）
+ */
+function hideSectionLoading(sectionId, delay = 0) {
+    const fn = () => {
+        const overlay = document.getElementById(`${sectionId}-loading-overlay`);
+        if (overlay) overlay.style.display = 'none';
     };
-    
-    const progress = progressMap[status] || { width: '0%', hint: '' };
-    taskProgressBar.style.width = progress.width;
-    
-    // 如果完成或失败,3秒后隐藏状态栏
-    if (status === 'SUCCEEDED' || status === '完成 ✓' || 
-        status === 'FAILED' || status === '失败 ✗') {
-        setTimeout(() => {
-            statusBar.classList.remove('show');
-        }, 3000);
-    }
+    delay > 0 ? setTimeout(fn, delay) : fn();
 }
 
 /**
@@ -197,6 +202,7 @@ async function generateImage() {
     const prompt = document.getElementById('image-prompt').value.trim();
     const negativePrompt = document.getElementById('negative-prompt').value.trim();
     const size = document.getElementById('image-size').value;
+    const model = document.getElementById('image-model').value;  // 获取选择的模型
     
     if (!prompt) {
         showToast('请输入图片描述', 'error');
@@ -210,7 +216,7 @@ async function generateImage() {
     const apiCfg = getApiConfig();
     
     // 更新UI
-    updateStatus('生成图片', '处理中...');
+    showSectionLoading('image', '正在生成图片...', 30);
     updateStepIndicator(1);
     
     try {
@@ -225,6 +231,7 @@ async function generateImage() {
                 prompt: prompt,
                 negative_prompt: negativePrompt,
                 size: size,
+                model: model,  // 传递模型参数
                 reference_images: refImages,
                 ...apiCfg.image  // 包含页面自定义的api_key和base_url
             })
@@ -241,15 +248,16 @@ async function generateImage() {
             
             // 更新步骤
             updateStepIndicator(2);
-            updateStatus('图片生成', '完成 ✓', null);
+            updateSectionLoading('image', '图片生成完成 ✓', 100);
+            hideSectionLoading('image', 1500);
             
             showToast('图片生成成功!', 'success');
         } else {
-            updateStatus('图片生成', '失败 ✗');
+            hideSectionLoading('image');
             showToast('生成失败: ' + result.error, 'error');
         }
     } catch (error) {
-        updateStatus('图片生成', '失败 ✗');
+        hideSectionLoading('image');
         showToast('请求失败: ' + error.message, 'error');
     }
 }
@@ -339,6 +347,7 @@ function setUrlInputState(state, placeholder) {
  */
 function clearImageSource() {
     videoSourceImageUrl = null;
+    videoSourceHttpsUrl = null;
     
     // 清除预览
     const selectedVideoImage = document.getElementById('selected-video-image');
@@ -368,6 +377,7 @@ function handleUrlInput(value) {
     if (value.trim()) {
         // 用户输入了URL，清除之前的选择状态
         videoSourceImageUrl = null;
+        videoSourceHttpsUrl = null;
         // 隐藏上传状态
         document.getElementById('local-upload-status').style.display = 'none';
         document.getElementById('btn-clear-upload').style.display = 'none';
@@ -427,8 +437,9 @@ async function handleLocalImageUpload(input) {
         const result = await response.json();
         
         if (result.success) {
-            // 使用 oss:// 临时URL作为视频首帧
+            // oss:// URL 供通义万相；https:// URL 供即梦
             videoSourceImageUrl = result.oss_url;
+            videoSourceHttpsUrl = result.https_url || null;
             // 禁用URL输入框，明确显示当前图片源
             setUrlInputState('disabled', '已使用本地上传的图片');
             progressText.textContent = `✅ 上传成功！有效期48小时`;
@@ -459,13 +470,19 @@ async function handleLocalImageUpload(input) {
  * 生成视频
  */
 async function generateVideo() {
-    // 优先使用上传的图片（videoSourceImageUrl），其次使用输入的URL
+    const model = document.getElementById('image-model').value;
+    // 即梦使用MinIO https URL；通义万相使用 oss:// URL
     const imageUrlInput = document.getElementById('image-url-input').value.trim();
-    const imageUrl = videoSourceImageUrl || imageUrlInput;
+    const imageUrl = (model === 'jimeng')
+        ? (videoSourceHttpsUrl || videoSourceImageUrl || imageUrlInput)
+        : (videoSourceImageUrl || imageUrlInput);
     
     if (!imageUrl) {
-        showToast('请上传图片或输入图片URL', 'error');
-        return;
+        // 即梦支持纯文生视频，通义万相必须有图片
+        if (model !== 'jimeng') {
+            showToast('请上传图片或输入图片URL', 'error');
+            return;
+        }
     }
     
     // 验证图片URL格式（oss://允许）
@@ -492,7 +509,7 @@ async function generateVideo() {
     }
     
     // 更新UI
-    updateStatus('生成视频', '创建任务中...');
+    showSectionLoading('video', '创建视频任务中...', 20);
     
     // 获取页面API配置
     const apiCfg = getApiConfig();
@@ -517,6 +534,7 @@ async function generateVideo() {
                 prompt: prompt,
                 resolution: resolution,
                 duration: duration,
+                model: document.getElementById('image-model').value,
                 ...apiCfg.video  // 包含页面自定义的api_key和base_url
             })
         });
@@ -533,12 +551,12 @@ async function generateVideo() {
             startPolling();
         } else {
             showToast('创建任务失败: ' + (result.error || '未知错误'), 'error');
-            updateStatus('生成视频', '失败 ✗');
+            hideSectionLoading('video');
         }
     } catch (error) {
         console.error('请求失败:', error);
         showToast('请求失败: ' + error.message, 'error');
-        updateStatus('生成视频', '失败 ✗');
+        hideSectionLoading('video');
     }
 }
 
@@ -556,7 +574,8 @@ function startPolling() {
         // 检查超时
         if (Date.now() - pollStartTime > POLL_TIMEOUT) {
             clearInterval(pollTimer);
-            updateStatus('生成视频', '超时 ✗', currentTaskId);
+            updateSectionLoading('video', '任务超时 ✗', 100);
+            hideSectionLoading('video', 2000);
             showToast('任务超时,请重试', 'error');
             return;
         }
@@ -587,16 +606,22 @@ function startPolling() {
                     showToast('视频生成成功，但获取失败', 'warning');
                 }
                 
-                updateStatus('视频生成', '完成 ✓', currentTaskId);
+                updateSectionLoading('video', '视频生成完成 ✓', 100);
+                hideSectionLoading('video', 1500);
                 showToast('视频生成成功!', 'success');
             } else if (result.status === 'FAILED') {
                 // 任务失败
                 clearInterval(pollTimer);
-                updateStatus('生成视频', '失败 ✗', currentTaskId);
+                updateSectionLoading('video', '生成失败 ✗', 100);
+                hideSectionLoading('video', 2000);
                 showToast('生成失败: ' + (result.error || '未知错误'), 'error');
             } else {
                 // 任务进行中
-                updateStatus('生成视频', result.status, currentTaskId);
+                if (result.status === 'PENDING') {
+                    updateSectionLoading('video', '任务排队中...', 25);
+                } else {
+                    updateSectionLoading('video', '视频生成中...', 60);
+                }
             }
         } catch (error) {
             console.error('轮询失败:', error);
@@ -660,7 +685,8 @@ async function fullPipeline() {
     const refImages = referenceImageUrls.filter(url => url !== null);
     
     // 更新UI
-    updateStatus('一键生成', '生成图片中...');
+    showSectionLoading('image', '正在生成图片...', 20);
+    showSectionLoading('video', '等待图片生成...', 10);
     updateStepIndicator(1);
     
     try {
@@ -694,16 +720,20 @@ async function fullPipeline() {
             // 开始轮询视频任务
             currentTaskId = result.task_id;
             updateStepIndicator(2);
-            updateStatus('一键生成', '生成视频中...', currentTaskId);
+            updateSectionLoading('image', '图片已生成 ✓', 100);
+            hideSectionLoading('image', 1500);
+            updateSectionLoading('video', '正在生成视频...', 40);
             showToast('图片生成完成,正在生成视频...');
             
             startPolling();
         } else {
-            updateStatus('一键生成', '失败 ✗');
+            hideSectionLoading('image');
+            hideSectionLoading('video');
             showToast(`${result.stage}阶段失败: ${result.error}`, 'error');
         }
     } catch (error) {
-        updateStatus('一键生成', '失败 ✗');
+        hideSectionLoading('image');
+        hideSectionLoading('video');
         showToast('请求失败: ' + error.message, 'error');
     }
 }

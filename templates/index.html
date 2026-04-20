@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>通义万相2.7 视频生成器</title>
+    <title>AI 视频生成器 - 多模型智能创作</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
@@ -12,8 +12,8 @@
         <header>
             <div class="header-main">
                 <div>
-                    <h1>🎬 通义万相2.7 视频生成器</h1>
-                    <p class="subtitle">文生图→图文生视频，两阶段智能创作</p>
+                    <h1>🎬 AI 视频生成器</h1>
+                    <p class="subtitle">支持通义万相 / 即梦AI，文生图→图文生视频，两阶段智能创作</p>
                 </div>
                 <button class="btn-settings" onclick="toggleSettings()" title="API 设置">⚙️ 设置</button>
             </div>
@@ -337,6 +337,14 @@
                         </select>
                     </div>
 
+                    <div class="form-group">
+                        <label for="image-model">AI 模型</label>
+                        <select id="image-model">
+                            <option value="wanx" selected>🎨 通义万相 2.7</option>
+                            <option value="jimeng">🌟 即梦AI 4.0</option>
+                        </select>
+                    </div>
+
                     <button class="btn btn-primary" onclick="generateImage()">
                         🖼️ 生成图片
                     </button>
@@ -357,6 +365,17 @@
                         <img id="generated-image" src="" alt="生成的图片" style="display:none;">
                     </div>
                 </div>
+
+            <!-- 图片生成中遮罩 -->
+            <div class="section-loading-overlay" id="image-loading-overlay" style="display:none;">
+                <div class="section-loading-content">
+                    <div class="section-loading-spinner"></div>
+                    <div class="section-loading-text" id="image-loading-text">正在生成图片...</div>
+                    <div class="section-loading-progress-wrap">
+                        <div class="section-loading-progress-bar" id="image-loading-bar"></div>
+                    </div>
+                </div>
+            </div>
             </div>
 
             <!-- 右侧: 图文生视频区域 -->
@@ -447,22 +466,20 @@
                         </video>
                     </div>
                 </div>
+
+            <!-- 视频生成中遮罩 -->
+            <div class="section-loading-overlay" id="video-loading-overlay" style="display:none;">
+                <div class="section-loading-content">
+                    <div class="section-loading-spinner"></div>
+                    <div class="section-loading-text" id="video-loading-text">正在生成视频...</div>
+                    <div class="section-loading-progress-wrap">
+                        <div class="section-loading-progress-bar" id="video-loading-bar"></div>
+                    </div>
+                </div>
+            </div>
             </div>
         </div>
 
-        <!-- 任务状态栏 -->
-        <div class="task-status-bar" id="task-status-bar">
-            <div class="status-info">
-                <span class="status-label">当前任务:</span>
-                <span id="current-task-name">-</span>
-            </div>
-            <div class="progress-container">
-                <div class="progress-bar" id="task-progress-bar"></div>
-            </div>
-            <div class="status-info">
-                <span id="current-task-status">-</span>
-            </div>
-        </div>
         </div><!-- /tab-studio -->
 
         <!-- Tab 2: 分镜规划 -->
