@@ -21,10 +21,79 @@ from config import (
 from volcengine.visual.VisualService import VisualService
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 最大上传50MB
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 最大上佴50MB
 
 # 人物库存储文件
 CHARACTERS_FILE = os.path.join(os.path.dirname(__file__), 'characters.json')
+
+# VLM 评审反馈与进化文件
+BASE_DIR        = os.path.dirname(__file__)
+FEEDBACK_FILE   = os.path.join(BASE_DIR, 'review_feedback.jsonl')
+PROMPTS_FILE    = os.path.join(BASE_DIR, 'review_prompts.json')
+
+# 内存中当前使用的评审提示词（应用启动时加载，进化后动态更新）
+CURRENT_REVIEW_PROMPT = None   # 延迟初始化，在 _init_review_prompts() 中设置
+
+# 分镜规划反馈与进化文件
+SCENE_PROMPTS_FILE  = os.path.join(BASE_DIR, 'scene_prompts.json')
+SCENE_FEEDBACK_FILE = os.path.join(BASE_DIR, 'scene_feedback.jsonl')
+CURRENT_SCENE_PROMPT = None   # 延迟初始化，在 _init_scene_prompts() 中设置
+
+
+def _init_review_prompts():
+    """应用启动时初始化 review_prompts.json，加载最新评审提示词到内存。"""
+    global CURRENT_REVIEW_PROMPT
+    if not os.path.exists(PROMPTS_FILE):
+        # 首次运行：用硬编码提示词创建 v1
+        data = {
+            "current_version": "v1",
+            "versions": [{
+                "version": "v1",
+                "created_at": datetime.now().isoformat(),
+                "feedback_count_at_creation": 0,
+                "prompt": REVIEW_SYSTEM_PROMPT
+            }]
+        }
+        with open(PROMPTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        CURRENT_REVIEW_PROMPT = REVIEW_SYSTEM_PROMPT
+    else:
+        with open(PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        versions = data.get('versions', [])
+        if versions:
+            CURRENT_REVIEW_PROMPT = versions[-1]['prompt']
+        else:
+            CURRENT_REVIEW_PROMPT = REVIEW_SYSTEM_PROMPT
+    print(f"[VLM评审] 提示词已加载，当前版本: {data.get('current_version', 'v1')}")
+
+
+def _init_scene_prompts():
+    """应用启动时初始化 scene_prompts.json，加载最新分镜生成提示词到内存。"""
+    global CURRENT_SCENE_PROMPT
+    if not os.path.exists(SCENE_PROMPTS_FILE):
+        # 首次运行：用硬编码提示词创建 v1
+        data = {
+            "current_version": "v1",
+            "versions": [{
+                "version": "v1",
+                "created_at": datetime.now().isoformat(),
+                "feedback_count_at_creation": 0,
+                "prompt": SCENE_SYSTEM_PROMPT
+            }]
+        }
+        with open(SCENE_PROMPTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        CURRENT_SCENE_PROMPT = SCENE_SYSTEM_PROMPT
+    else:
+        with open(SCENE_PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        versions = data.get('versions', [])
+        if versions:
+            CURRENT_SCENE_PROMPT = versions[-1]['prompt']
+        else:
+            CURRENT_SCENE_PROMPT = SCENE_SYSTEM_PROMPT
+    print(f"[分镜规划] 提示词已加载，当前版本: {data.get('current_version', 'v1')}")
 
 
 def load_characters():
@@ -542,6 +611,125 @@ def create_video_task(image_url, prompt, negative_prompt="", resolution="720P", 
         return {"success": False, "error": error_msg}
 
 
+def create_video_task_r2v(prompt, reference_images=None, first_frame_url=None,
+                          negative_prompt="", resolution="720P", duration=5,
+                          api_key=None, api_url=None):
+    """
+    创建参考生视频任务 - 使用 wan2.7-r2v 模型
+    
+    支持多参考图 + 首帧图，可实现人物从画面外入场等效果。
+    
+    Args:
+        prompt: 视频描述文本，可用"图1""图2"指代参考图
+        reference_images: 参考图URL列表（最多5张，支持公网URL/oss://URL/Base64 data URL）
+        first_frame_url: 首帧图片URL（可选，可以是纯背景场景）
+        negative_prompt: 反向提示词
+        resolution: 分辨率 (720P, 1080P)
+        duration: 视频时长(秒)，取值范围 2-10
+        api_key: 可选，覆盖默认VIDEO_API_KEY
+        api_url: 可选，覆盖默认VIDEO_API_URL
+    
+    Returns:
+        dict: {'success': bool, 'task_id': str, 'error': str}
+    """
+    _api_key = api_key or VIDEO_API_KEY
+    _api_url = api_url or WANX_VIDEO_API_URL
+    try:
+        # 构建 media 数组
+        media = []
+        need_oss_header = False
+        
+        # 添加参考图
+        if reference_images:
+            for img_url in reference_images:
+                if not img_url:
+                    continue
+                media.append({
+                    "type": "reference_image",
+                    "url": img_url
+                })
+                if img_url.startswith('oss://'):
+                    need_oss_header = True
+        
+        # 添加首帧图（可选）
+        if first_frame_url:
+            media.append({
+                "type": "first_frame",
+                "url": first_frame_url
+            })
+            if first_frame_url.startswith('oss://'):
+                need_oss_header = True
+        
+        if not media:
+            return {"success": False, "error": "参考生视频需要至少提供一张参考图或首帧图"}
+        
+        # r2v 最长 10 秒
+        duration = min(duration, 10)
+        
+        payload = {
+            "model": "wan2.7-r2v",
+            "input": {
+                "prompt": prompt,
+                "media": media
+            },
+            "parameters": {
+                "resolution": resolution,
+                "duration": duration,
+                "prompt_extend": False,
+                "watermark": False
+            }
+        }
+        
+        # 如果有反向提示词
+        if negative_prompt:
+            payload["input"]["negative_prompt"] = negative_prompt
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_api_key}",
+            "X-DashScope-Async": "enable"
+        }
+        
+        # 如果使用 oss:// 临时URL
+        if need_oss_header:
+            headers["X-DashScope-OssResourceResolve"] = "enable"
+            print(f"[参考生视频] 使用OSS临时URL，已添加 OssResourceResolve 头")
+        
+        print(f"[参考生视频] 创建任务 (wan2.7-r2v), prompt: {prompt[:50]}...")
+        print(f"[参考生视频] 参数: resolution={resolution}, duration={duration}")
+        print(f"[参考生视频] 参考图: {len(reference_images) if reference_images else 0}张, 首帧: {'有' if first_frame_url else '无'}")
+        
+        response = requests.post(_api_url, json=payload, headers=headers, timeout=60)
+        
+        print(f"[参考生视频] 响应状态码: {response.status_code}")
+        print(f"[参考生视频] 响应内容: {response.text}")
+        
+        if response.status_code != 200:
+            error_detail = response.text
+            print(f"[参考生视频] API错误: {error_detail}")
+            return {"success": False, "error": f"API错误: {error_detail}"}
+        
+        result = response.json()
+        
+        if "output" in result and "task_id" in result["output"]:
+            task_id = result["output"]["task_id"]
+            print(f"[参考生视频] 任务创建成功, task_id: {task_id}")
+            return {"success": True, "task_id": task_id}
+        else:
+            error_msg = result.get("message", "未知错误")
+            print(f"[参考生视频] 创建任务失败: {error_msg}")
+            return {"success": False, "error": error_msg}
+    
+    except requests.exceptions.RequestException as e:
+        error_msg = f"API调用失败: {str(e)}"
+        print(f"[参考生视频] {error_msg}")
+        return {"success": False, "error": error_msg}
+    except Exception as e:
+        error_msg = f"创建参考生视频任务时出错: {str(e)}"
+        print(f"[参考生视频] {error_msg}")
+        return {"success": False, "error": error_msg}
+
+
 def query_task_status(task_id):
     """
     查询任务状态
@@ -791,7 +979,7 @@ def api_generate_image():
 
 @app.route('/api/generate-video', methods=['POST'])
 def api_generate_video():
-    """生成视频API"""
+    """生成视频API - 支持通义万相i2v/r2v、即梦"""
     try:
         data = request.json
         image_url = data.get('image_url', '').strip()
@@ -799,13 +987,14 @@ def api_generate_video():
         negative_prompt = data.get('negative_prompt', '').strip()
         resolution = data.get('resolution', '720P')
         duration = data.get('duration', 5)
-        model = data.get('model', 'wanx')  # wanx 或 jimeng
+        model = data.get('model', 'wanx')  # wanx / r2v / jimeng
+        reference_images = data.get('reference_images', [])  # r2v 参考图列表
         # 接收页面传入的API配置
         page_api_key = data.get('api_key', '').strip() or None
         page_base_url = data.get('base_url', '').strip() or None
         page_api_url = None
         if page_base_url:
-            page_api_url = page_base_url.rstrip('/') + '/api/v1/services/aigc/text-2-video-synthesis/video-synthesis'
+            page_api_url = page_base_url.rstrip('/') + '/api/v1/services/aigc/video-generation/video-synthesis'
         
         if not prompt:
             return jsonify({"success": False, "error": "缺少视频描述"}), 400
@@ -813,8 +1002,22 @@ def api_generate_video():
         if model == 'jimeng':
             # 即梦视频生成
             result = create_video_task_jimeng(image_url if image_url else None, prompt, negative_prompt, duration)
+        elif model == 'r2v':
+            # 通义万相参考生视频 (wan2.7-r2v)
+            # reference_images: 参考图URL列表（人物三视图等）
+            # image_url: 可选首帧图（可以是纯背景）
+            result = create_video_task_r2v(
+                prompt,
+                reference_images=reference_images if reference_images else None,
+                first_frame_url=image_url if image_url else None,
+                negative_prompt=negative_prompt,
+                resolution=resolution,
+                duration=duration,
+                api_key=page_api_key,
+                api_url=page_api_url
+            )
         else:
-            # 通义万相视频生成
+            # 通义万相图生视频 (wan2.7-i2v)
             if not image_url:
                 return jsonify({"success": False, "error": "通义万相需要提供首帧图片"}), 400
             result = create_video_task(image_url, prompt, negative_prompt, resolution, duration,
@@ -1059,6 +1262,258 @@ def serve_video(filename):
 
 # ==================== 分镜规划（千问大模型） ====================
 
+# ==================== VLM 视频评审 ====================
+
+REVIEW_SYSTEM_PROMPT = """你是一名专业的AI视频质量评审员。观看提供的视频片段，对照分镜提示词，从以下4个维度进行评审。
+
+输出严格的JSON格式，不要包含任何额外文字或Markdown标记：
+{
+  "overall_score": 1-10的整数,
+  "scene_match": {"score": 1-10, "comment": "场景/内容与提示词的匹配程度说明"},
+  "motion_quality": {"score": 1-10, "comment": "人物/物体动作是否流畅自然的说明"},
+  "visual_quality": {"score": 1-10, "comment": "画面构图、光影、清晰度说明"},
+  "consistency": {"score": 1-10, "comment": "与场景描述中人物外貌/服装的一致性说明"},
+  "suggestion": "简短改进建议（1-2句）"
+}
+
+评分标准：9-10优秀，7-8良好，5-6一般，3-4较差，1-2很差。"""
+
+
+def review_video_with_vlm(video_url, scene_prompt, api_key=None):
+    """
+    使用千问vlm模型对视频进行场景匹配度评审
+
+    Args:
+        video_url: 视频公网可访问CDN URL
+        scene_prompt: 分镜提示词（评审参考依据）
+        api_key: 可选，覆盖QWEN_API_KEY
+
+    Returns:
+        dict: {'success': bool, 'review': dict, 'error': str}
+    """
+    import json
+    _api_key = api_key or QWEN_API_KEY
+    if not _api_key:
+        return {"success": False, "error": "未配置QWEN_API_KEY"}
+
+    headers = {
+        "Authorization": f"Bearer {_api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "qwen-vl-max",
+        "messages": [
+            {"role": "system", "content": CURRENT_REVIEW_PROMPT or REVIEW_SYSTEM_PROMPT},
+            {"role": "user", "content": [
+                {"type": "video", "video": video_url},
+                {"type": "text", "text": f"分镜提示词：{scene_prompt}"}
+            ]}
+        ]
+    }
+    try:
+        resp = requests.post(QWEN_API_URL, json=payload, headers=headers, timeout=120)
+        resp.raise_for_status()
+        raw = resp.json()
+        content = raw["choices"][0]["message"]["content"]
+        # 去掉可能的Markdown代码块包裹
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1]
+        if content.endswith("```"):
+            content = content.rsplit("```", 1)[0]
+        review = json.loads(content.strip())
+        return {"success": True, "review": review}
+    except json.JSONDecodeError as e:
+        return {"success": False, "error": f"VLM返回格式异常：{str(e)}，原始内容：{content[:200]}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.route('/api/review-video', methods=['POST'])
+def api_review_video():
+    """视频VLM评审API"""
+    try:
+        data = request.json
+        video_url    = data.get('video_url', '').strip()
+        scene_prompt = data.get('scene_prompt', '').strip()
+        if not video_url:
+            return jsonify({"success": False, "error": "缺少视频URL"}), 400
+        result = review_video_with_vlm(video_url, scene_prompt)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": f"服务器错误: {str(e)}"}), 500
+
+
+EVOLVE_SYSTEM_PROMPT = """你是一名提示词优化专家。我将提供一批AI视频评审案例，以及用户对每次评审结果的文字纠正。
+请分析用户反馈中反复出现的问题（如哪些情况被高估、哪些细节被忽视、哪些评分标准与用户实际认知不符），
+然后重写评审系统提示词，使其更符合用户的判断标准。
+
+要求：
+1. 保留原提示词的四个评审维度和 JSON 输出格式（不能改变结构）
+2. 针对用户反馈中的具体问题调整评分标准
+3. 可以新增评分细则和示例
+4. 只输出新的系统提示词全文，不要包含任何解释。"""
+
+
+@app.route('/api/review-feedback', methods=['POST'])
+def api_review_feedback():
+    """保存用户对VLM评审结果的反馈"""
+    try:
+        data = request.json
+        user_feedback = data.get('user_feedback', '').strip()
+        if not user_feedback:
+            return jsonify({"success": False, "error": "反馈内容不能为空"}), 400
+
+        # 加载当前提示词版本号
+        current_version = "v1"
+        if os.path.exists(PROMPTS_FILE):
+            with open(PROMPTS_FILE, 'r', encoding='utf-8') as f:
+                prompts_data = json.load(f)
+            current_version = prompts_data.get('current_version', 'v1')
+
+        record = {
+            "timestamp": datetime.now().isoformat(),
+            "video_url": data.get('video_url', ''),
+            "scene_prompt": data.get('scene_prompt', ''),
+            "vlm_output": data.get('vlm_output', {}),
+            "user_feedback": user_feedback,
+            "prompt_version": current_version
+        }
+        with open(FEEDBACK_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+        # 统计总条数
+        total = sum(1 for _ in open(FEEDBACK_FILE, 'r', encoding='utf-8'))
+        return jsonify({"success": True, "total_feedbacks": total})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/evolve-review-prompt', methods=['POST'])
+def api_evolve_review_prompt():
+    """读取全部反馈，用千问分析并重写评审提示词"""
+    global CURRENT_REVIEW_PROMPT
+    try:
+        if not os.path.exists(FEEDBACK_FILE):
+            return jsonify({"success": False, "error": "暂无反馈记录"}), 400
+
+        feedbacks = []
+        with open(FEEDBACK_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    feedbacks.append(json.loads(line))
+
+        if not feedbacks:
+            return jsonify({"success": False, "error": "暂无反馈记录"}), 400
+
+        # 构造千问请求：反馈案例 + 当前提示词
+        cases_text = ""
+        for i, fb in enumerate(feedbacks, 1):
+            cases_text += f"""
+案例{i}:
+- 视频摈景描述: {fb.get('scene_prompt', '')[:200]}
+- VLM评审结果: 综合评分={fb.get('vlm_output', {}).get('overall_score', '?')}
+- 用户纠正反馈: {fb.get('user_feedback', '')}
+"""
+
+        user_msg = f"""当前评审提示词：
+---
+{CURRENT_REVIEW_PROMPT or REVIEW_SYSTEM_PROMPT}
+---
+
+用户反馈案例（共{len(feedbacks)}条）：
+{cases_text}
+
+请根据以上反馈重写评审系统提示词。"""
+
+        headers = {
+            "Authorization": f"Bearer {QWEN_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "qwen-plus",
+            "messages": [
+                {"role": "system", "content": EVOLVE_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_msg}
+            ]
+        }
+        resp = requests.post(QWEN_API_URL, json=payload, headers=headers, timeout=120)
+        resp.raise_for_status()
+        new_prompt = resp.json()["choices"][0]["message"]["content"].strip()
+
+        # 版本号递增
+        with open(PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            prompts_data = json.load(f)
+        versions = prompts_data.get('versions', [])
+        last_ver_num = int(versions[-1]['version'].lstrip('v')) if versions else 0
+        new_version = f"v{last_ver_num + 1}"
+
+        versions.append({
+            "version": new_version,
+            "created_at": datetime.now().isoformat(),
+            "feedback_count_at_creation": len(feedbacks),
+            "prompt": new_prompt
+        })
+        prompts_data['current_version'] = new_version
+        with open(PROMPTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(prompts_data, f, ensure_ascii=False, indent=2)
+
+        CURRENT_REVIEW_PROMPT = new_prompt
+        return jsonify({"success": True, "new_version": new_version,
+                        "feedback_count": len(feedbacks),
+                        "new_prompt_preview": new_prompt[:200]})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/review-status', methods=['GET'])
+def api_review_status():
+    """返回当前提示词版本、反馈总数、版本历史"""
+    try:
+        # 统计反馈条数
+        feedback_count = 0
+        recent_feedbacks = []
+        if os.path.exists(FEEDBACK_FILE):
+            all_lines = [l.strip() for l in open(FEEDBACK_FILE, 'r', encoding='utf-8') if l.strip()]
+            feedback_count = len(all_lines)
+            for line in all_lines[-5:]:
+                fb = json.loads(line)
+                recent_feedbacks.append({
+                    "timestamp": fb.get('timestamp', ''),
+                    "user_feedback": fb.get('user_feedback', '')[:100],
+                    "prompt_version": fb.get('prompt_version', '')
+                })
+            recent_feedbacks.reverse()
+
+        # 版本历史
+        versions = []
+        current_version = "v1"
+        if os.path.exists(PROMPTS_FILE):
+            with open(PROMPTS_FILE, 'r', encoding='utf-8') as f:
+                prompts_data = json.load(f)
+            current_version = prompts_data.get('current_version', 'v1')
+            for v in reversed(prompts_data.get('versions', [])):
+                versions.append({
+                    "version": v['version'],
+                    "created_at": v.get('created_at', ''),
+                    "feedback_count_at_creation": v.get('feedback_count_at_creation', 0),
+                    "prompt_preview": v['prompt'][:300]
+                })
+
+        return jsonify({
+            "success": True,
+            "current_version": current_version,
+            "feedback_count": feedback_count,
+            "recent_feedbacks": recent_feedbacks,
+            "versions": versions
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ==================== 分镜规划（千问大模型） ====================
+
 SCENE_SYSTEM_PROMPT = """你是一位世界顶级的分镜脚本大师和AI生成提示词专家，拥有20年电影分镜、动画分镜经验，精通电影视觉语言、构图美学、光影设计、叙事节奏和镜头衔接。
 
 你的任务：把用户的场景描述拆分成若干个专业电影分镜，为每个分镜提供高度细化的四组内容，并设计分镜间的衔接方案。
@@ -1144,6 +1599,50 @@ SCENE_SYSTEM_PROMPT = """你是一位世界顶级的分镜脚本大师和AI生�
 }"""
 
 
+SCENE_REVIEW_SYSTEM_PROMPT = """你是一位专业的分镜脚本评审专家。请对输入的【整组分镜序列】做全局评审。
+
+评审要求：
+1. 站在整体叙事角度，评估每个分镜在故事中的位置和衔接是否合理
+2. 评估各分镜的时长分配是否与叙事节奏匹配
+3. 评估分镜间的 transition（衔接）是否自然流畅
+4. 评估整体是否构成完整的叙事弧线（开端→发展→高潮→收束）
+5. 指出问题分镜及具体改进建议
+
+每个分镜满分 10 分，四维度：
+- narrative（叙事作用）：该分镜在整体故事中是否有明确引导作用
+- image_prompt_score（文生图提示词质量）：要素完整性、画面描述精细度
+- video_prompt_score（视频提示词质量）：镜头运动、人物动态、音效描述完整度
+- transition_score（衔接合理性）：与前后分镜的衔接是否自然，第一个分镜评估其作为开场的合理性
+
+严格返回 JSON，不得包含其他内容：
+{
+  "overall_score": 数字 (整组评分),
+  "overall_comment": "中文整体评价，80字内",
+  "scenes": [
+    {
+      "scene_number": 数字,
+      "narrative": 数字,
+      "image_prompt_score": 数字,
+      "video_prompt_score": 数字,
+      "transition_score": 数字,
+      "score": 数字 (四维平均),
+      "suggestion": "中文针对该分镜的改进建议，60字内"
+    }
+  ]
+}"""
+
+
+SCENE_EVOLVE_SYSTEM_PROMPT = """你是一位专业的分镜脚本生成系统提示词优化专家。
+你会收到以下输入：
+1. 当前系统提示词（即现在用来生成分镜的指令）
+2. 用户对历次分镜结果的反馈列表
+
+你的目标：分析反馈中的共性问题，有针对性地修订提示词中的相应章节或要求，生成完整的新版系统提示词。
+要求：
+- 保持原提示词的 JSON 格式要求不变
+- 只输出新版完整提示词文本，不得添加其他说明文字或 markdown"""
+
+
 def split_scenes_with_qwen(description, style="电影感写实", num_scenes="auto", api_key=None, model="qwen-plus"):
     """调用千问大模型将场景描述拆分为分镜"""
     _api_key = api_key or QWEN_API_KEY
@@ -1158,7 +1657,7 @@ def split_scenes_with_qwen(description, style="电影感写实", num_scenes="aut
     payload = {
         "model": _model,
         "messages": [
-            {"role": "system", "content": SCENE_SYSTEM_PROMPT},
+                {"role": "system", "content": CURRENT_SCENE_PROMPT or SCENE_SYSTEM_PROMPT},
             {"role": "user",   "content": user_prompt}
         ],
         "response_format": {"type": "json_object"},
@@ -1209,7 +1708,185 @@ def api_split_scenes():
         return jsonify({'success': False, 'error': f'服务器错误: {str(e)}'}), 500
 
 
-# ==================== 人物库接口 ====================
+@app.route('/api/review-scene', methods=['POST'])
+def api_review_scene():
+    """全部分镜全局评审接口"""
+    try:
+        data = request.json
+        scenes = data.get('scenes', [])
+        api_key = data.get('api_key', '').strip() or None
+        _api_key = api_key or QWEN_API_KEY
+
+        if not scenes:
+            return jsonify({'success': False, 'error': '没有分镜数据'}), 400
+
+        # 构建分镜序列概览
+        timeline = '\n'.join(
+            f"分镜{ s.get('scene_number','') }｜{s.get('scene_title','')}｜时长{s.get('duration','')}｜衔接：{s.get('transition','')}"
+            for s in scenes
+        )
+        scene_details = '\n\n'.join(
+            f"=== 分镜{s.get('scene_number','')} ===\n标题：{s.get('scene_title','')}\n说明：{s.get('scene_desc','')}\n镜头：{s.get('shot_type','')}｜情绪：{s.get('mood','')}\n文生图提示词：{s.get('image_prompt','')}\n视频提示词：{s.get('video_prompt','')}"
+            for s in scenes
+        )
+        user_prompt = f"""请评审以下整组分镜序列：
+
+分镜时间线：
+{timeline}
+
+各分镜详细内容：
+{scene_details}
+
+请站在整体叙事角度评审每个分镜的合理性，返回JSON。"""
+
+        payload = {
+            "model": "qwen-max",
+            "messages": [
+                {"role": "system", "content": SCENE_REVIEW_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt}
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.3,
+            "max_tokens": 2048
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_api_key}"
+        }
+        print(f"[分镜评审] 全局评审 {len(scenes)} 个分镜")
+        resp = requests.post(QWEN_API_URL, json=payload, headers=headers, timeout=120)
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        review = json.loads(content)
+        return jsonify({'success': True, 'review': review})
+    except Exception as e:
+        print(f"[分镜评审] 异常: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/scene-feedback', methods=['POST'])
+def api_scene_feedback():
+    """存储分镜反馈"""
+    try:
+        data = request.json
+        record = {
+            "timestamp":    datetime.now().isoformat(),
+            "scene_number": data.get('scene_number'),
+            "scene_title":  data.get('scene_title', ''),
+            "scene_data":   data.get('scene_data', {}),
+            "review_output":data.get('review_output', {}),
+            "user_feedback":data.get('user_feedback', '').strip()
+        }
+        if not record['user_feedback']:
+            return jsonify({'success': False, 'error': '反馈内容不能为空'}), 400
+        with open(SCENE_FEEDBACK_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        total = sum(1 for _ in open(SCENE_FEEDBACK_FILE, 'r', encoding='utf-8'))
+        print(f"[分镜反馈] 已存储，共 {total} 条")
+        return jsonify({'success': True, 'total_feedbacks': total})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/evolve-scene-prompt', methods=['POST'])
+def api_evolve_scene_prompt():
+    """读取分镜反馈、千问重写分镜生成系统提示词"""
+    global CURRENT_SCENE_PROMPT
+    try:
+        if not os.path.exists(SCENE_FEEDBACK_FILE):
+            return jsonify({'success': False, 'error': '还没有反馈数据'}), 400
+        feedbacks = []
+        with open(SCENE_FEEDBACK_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    feedbacks.append(json.loads(line.strip()))
+                except Exception:
+                    pass
+        if not feedbacks:
+            return jsonify({'success': False, 'error': '反馈列表为空'}), 400
+
+        current_prompt = CURRENT_SCENE_PROMPT or SCENE_SYSTEM_PROMPT
+        fb_text = '\n'.join(
+            f"[{i+1}] 分镜{r.get('scene_number','')}《{r.get('scene_title','')}》：{r.get('user_feedback','')}"
+            for i, r in enumerate(feedbacks[-30:])
+        )
+        user_prompt = (
+            f"当前系统提示词：\n{current_prompt}\n\n"
+            f"用户反馈（最近 {len(feedbacks[-30:])} 条）：\n{fb_text}\n\n"
+            "请输出优化后的完整系统提示词。"
+        )
+
+        api_key = QWEN_API_KEY
+        payload = {
+            "model": "qwen-max",
+            "messages": [
+                {"role": "system", "content": SCENE_EVOLVE_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt}
+            ],
+            "temperature": 0.5,
+            "max_tokens": 8192
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        print(f"[分镜进化] 开始分析 {len(feedbacks)} 条反馈...")
+        resp = requests.post(QWEN_API_URL, json=payload, headers=headers, timeout=300)
+        resp.raise_for_status()
+        new_prompt = resp.json()["choices"][0]["message"]["content"].strip()
+
+        # 写入新版本
+        with open(SCENE_PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            pdata = json.load(f)
+        versions = pdata.get('versions', [])
+        last_ver_num = int(versions[-1]['version'].lstrip('v')) if versions else 0
+        new_ver = f"v{last_ver_num + 1}"
+        versions.append({
+            "version":                  new_ver,
+            "created_at":               datetime.now().isoformat(),
+            "feedback_count_at_creation": len(feedbacks),
+            "prompt":                   new_prompt
+        })
+        pdata['current_version'] = new_ver
+        pdata['versions'] = versions
+        with open(SCENE_PROMPTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(pdata, f, ensure_ascii=False, indent=2)
+        CURRENT_SCENE_PROMPT = new_prompt
+        print(f"[分镜进化] 完成，新版本 {new_ver}")
+        return jsonify({'success': True, 'new_version': new_ver, 'feedback_count': len(feedbacks)})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/scene-status', methods=['GET'])
+def api_scene_status():
+    """分镜生成系统状态查询"""
+    try:
+        feedback_count = 0
+        if os.path.exists(SCENE_FEEDBACK_FILE):
+            feedback_count = sum(1 for _ in open(SCENE_FEEDBACK_FILE, 'r', encoding='utf-8'))
+        versions = []
+        current_version = 'v1'
+        if os.path.exists(SCENE_PROMPTS_FILE):
+            with open(SCENE_PROMPTS_FILE, 'r', encoding='utf-8') as f:
+                pdata = json.load(f)
+            current_version = pdata.get('current_version', 'v1')
+            for v in pdata.get('versions', []):
+                versions.append({
+                    'version':                  v['version'],
+                    'created_at':               v.get('created_at', ''),
+                    'feedback_count_at_creation': v.get('feedback_count_at_creation', 0),
+                    'prompt_preview':           v['prompt'][:120]
+                })
+        return jsonify({
+            'success':         True,
+            'current_version': current_version,
+            'feedback_count':  feedback_count,
+            'versions':        versions
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/characters', methods=['GET'])
 def api_get_characters():
@@ -1293,6 +1970,10 @@ def api_delete_character(char_id):
 
 
 if __name__ == '__main__':
+    # 初始化 VLM 评审提示词系统
+    _init_review_prompts()
+    # 初始化分镜生成提示词系统
+    _init_scene_prompts()
     print(f"启动服务器: http://{FLASK_HOST}:{FLASK_PORT}")
     print(f"调试模式: {FLASK_DEBUG}")
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)

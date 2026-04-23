@@ -384,38 +384,51 @@
                     <h2>🎬 图文生视频</h2>
                 </div>
 
-                <!-- 首帧图片选择 -->
+                <!-- 视频素材 -->
                 <div class="card" id="image-selection-card">
-                    <h3>📸 首帧图片 <span class="required">*</span></h3>
-                    <p class="hint">选择一张图片作为视频首帧</p>
-                    
-                    <div class="image-selector">
-                        <div class="selected-image-box" id="selected-image-box">
-                            <div class="placeholder-text">请选择图片</div>
-                            <img id="selected-video-image" src="" style="display:none;">
+                    <h3>🎬 视频素材</h3>
+                
+                    <!-- 首帧图片 -->
+                    <div class="video-material-section">
+                        <div class="video-material-label">
+                            <span class="material-tag material-tag-firstframe">首帧图</span>
+                            <span class="material-desc" id="first-frame-hint">视频第一帧的画面，可以是含人物的图或纯背景场景</span>
+                            <span class="required" id="first-frame-required">*</span>
                         </div>
-                        <div class="image-selector-actions">
-                            <!-- 方式1：使用左侧已生成的图片 -->
-                            <button class="btn btn-sm btn-success" onclick="useGeneratedImage()" id="btn-use-generated" disabled>
-                                ✨ 使用已生成的图片
-                            </button>
-                            <span class="or-text">或</span>
-                            <!-- 方式2：上传本地图片 -->
-                            <label class="btn btn-sm btn-secondary btn-upload-local" style="cursor:pointer;">
-                                📁 上传本地图片
-                                <input type="file" id="local-image-input" accept="image/*" style="display:none;" onchange="handleLocalImageUpload(this)">
-                            </label>
-                            <span class="or-text">或</span>
-                            <!-- 方式3：输入URL -->
-                            <input type="text" id="image-url-input" placeholder="输入公网图片URL (https://...)" oninput="handleUrlInput(this.value)">
+                        <div class="image-selector">
+                            <div class="selected-image-box" id="selected-image-box">
+                                <div class="placeholder-text">请选择首帧图片</div>
+                                <img id="selected-video-image" src="" style="display:none;">
+                            </div>
+                            <div class="image-selector-actions">
+                                <button class="btn btn-sm btn-success" onclick="useGeneratedImage()" id="btn-use-generated" disabled>
+                                    ✨ 使用已生成的图片
+                                </button>
+                                <span class="or-text">或</span>
+                                <label class="btn btn-sm btn-secondary btn-upload-local" style="cursor:pointer;">
+                                    📁 上传本地图片
+                                    <input type="file" id="local-image-input" accept="image/*" style="display:none;" onchange="handleLocalImageUpload(this)">
+                                </label>
+                                <span class="or-text">或</span>
+                                <input type="text" id="image-url-input" placeholder="输入公网图片URL (https://...)" oninput="handleUrlInput(this.value)">
+                            </div>
+                        </div>
+                        <div id="local-upload-status" style="display:none; margin-top:10px;">
+                            <div class="upload-status-row">
+                                <div class="upload-progress-text" id="upload-progress-text">正在上传并处理中...</div>
+                                <button class="btn-clear-source" id="btn-clear-upload" onclick="clearImageSource()" style="display:none;">x 清除</button>
+                            </div>
                         </div>
                     </div>
-
-                    <!-- 本地图片上传进度 -->
-                    <div id="local-upload-status" style="display:none; margin-top:10px;">
-                        <div class="upload-status-row">
-                            <div class="upload-progress-text" id="upload-progress-text">正在上传并处理中...</div>
-                            <button class="btn-clear-source" id="btn-clear-upload" onclick="clearImageSource()" style="display:none;">× 清除</button>
+                
+                    <!-- 人物参考图（r2v模式生效，其他模式忽略） -->
+                    <div class="video-material-section" id="video-ref-card">
+                        <div class="video-material-label">
+                            <span class="material-tag material-tag-ref">参考图</span>
+                            <span class="material-desc" id="ref-hint">r2v模式生效：人物三视图/道具/场景，提示词中用“图1”“图2”指代</span>
+                        </div>
+                        <div class="upload-slots" id="video-ref-slots" style="grid-template-columns: repeat(5, 1fr);">
+                            <!-- JS动态生成 -->
                         </div>
                     </div>
                 </div>
@@ -439,8 +452,17 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="video-duration">视频时长 (秒) <small style="color:#999">2-15秒</small></label>
+                        <label for="video-duration">视频时长 (秒) <small style="color:#999" id="duration-hint">2-15秒</small></label>
                         <input type="number" id="video-duration" value="5" min="2" max="15">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="video-model">视频生成模型</label>
+                        <select id="video-model" onchange="onVideoModelChange(this.value)">
+                            <option value="wanx">🎨 通义万相 2.7 (i2v)</option>
+                            <option value="r2v">🎬 通义万相 r2v (参考生视频)</option>
+                            <option value="jimeng">🌟 即梦AI 4.0</option>
+                        </select>
                     </div>
 
                     <button class="btn btn-primary" onclick="generateVideo()" id="btn-generate-video">
@@ -452,9 +474,14 @@
                 <div class="card result-card" id="video-result-card">
                     <div class="result-header">
                         <h3>🎬 生成的视频</h3>
-                        <button class="btn btn-sm btn-secondary" onclick="downloadResult('video')">
-                            💾 下载
-                        </button>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn btn-sm btn-secondary" onclick="downloadResult('video')">
+                                💾 下载
+                            </button>
+                            <button class="btn btn-sm btn-info" onclick="reviewVideoWithVLM()" id="btn-review-video" style="display:none;">
+                                🔍 VLM评审
+                            </button>
+                        </div>
                     </div>
                     <div class="result-content">
                         <div class="result-placeholder" id="video-placeholder">
@@ -465,7 +492,41 @@
                             您的浏览器不支持视频播放
                         </video>
                     </div>
+                    <!-- VLM评审结果区 -->
+                    <div id="video-review-result" style="display:none;">
+                        <div class="review-loading" id="review-loading" style="display:none;">
+                            <span class="review-loading-spinner"></span>正在评审中...
+                        </div>
+                        <div class="review-content" id="review-content"></div>
+                        <!-- 反馈输入区 -->
+                        <div id="review-feedback-area" style="display:none;">
+                            <div class="feedback-label">这次评审准确吗？写下你的看法：</div>
+                            <textarea id="review-feedback-text" rows="2"
+                                placeholder="例如：动作评分偏高，角色走路步伐明显不自然应该才4分..."></textarea>
+                            <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                                <button class="btn btn-sm btn-secondary" onclick="submitReviewFeedback()" id="btn-submit-feedback">
+                                    📝 提交反馈
+                                </button>
+                                <span id="feedback-submit-status" style="font-size:12px;"></span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+
+            <!-- VLM评审进化面板 -->
+            <div class="card" id="review-evolution-card" style="display:none;">
+                <div class="card-header-row">
+                    <h3>VLM 评审进化</h3>
+                    <span class="review-version-badge" id="review-version-badge">v1</span>
+                </div>
+                <p class="hint">已积累 <b id="feedback-count">0</b> 条反馈，点击下方按钮让千问分析反馈并自动优化评审标准</p>
+                <button class="btn btn-sm btn-primary" onclick="evolveReviewPrompt()" id="btn-evolve">
+                    ✨ 优化评审标准（千问分析反馈）
+                </button>
+                <div id="evolve-status" style="font-size:12px;margin-top:8px;"></div>
+                <!-- 版本历史 -->
+                <div id="evolve-history" style="margin-top:14px;"></div>
+            </div>
 
             <!-- 视频生成中遮罩 -->
             <div class="section-loading-overlay" id="video-loading-overlay" style="display:none;">
@@ -542,6 +603,20 @@
                             <span class="summary-badge" id="summary-total"></span>
                         </div>
                     </div>
+
+                    <!-- 分镜生成进化面板（有反馈后自动显示） -->
+                    <div class="card" id="scene-evolution-card" style="display:none;">
+                        <div class="card-header-row">
+                            <h3>分镜生成进化</h3>
+                            <span class="review-version-badge" id="scene-version-badge">v1</span>
+                        </div>
+                        <p class="hint">已积累 <b id="scene-feedback-count">0</b> 条反馈，点击下方按钮让千问分析反馈并优化分镜生成标准</p>
+                        <button class="btn btn-sm btn-primary" onclick="evolveScenePrompt()" id="btn-evolve-scene">
+                            ✨ 优化生成标准（千问分析反馈）
+                        </button>
+                        <div id="scene-evolve-status"></div>
+                        <div id="scene-evolve-history"></div>
+                    </div>
                 </div>
 
                 <!-- 右侧：分镜卡片区 -->
@@ -550,6 +625,17 @@
                     <div class="scene-loading" id="scene-loading" style="display:none;">
                         <div class="scene-loading-spinner"></div>
                         <p>分镜脚本师正在构思中…</p>
+                    </div>
+
+                    <!-- 全局评审按钮 + 结果区 -->
+                    <div class="card scene-review-global-card" id="scene-review-global-card" style="display:none;">
+                        <div class="scene-review-global-header">
+                            <button class="btn btn-sm btn-primary" onclick="reviewAllScenes()" id="btn-review-all-scenes">
+                                🔍 全局评审全部分镜
+                            </button>
+                            <span id="review-all-status" style="font-size:12px;margin-left:8px;"></span>
+                        </div>
+                        <div id="scene-review-global-result" style="display:none;"></div>
                     </div>
 
                     <!-- 分镜卡片列表 -->

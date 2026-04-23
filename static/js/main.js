@@ -7,8 +7,11 @@ let videoSourceHttpsUrl = null;    // MinIO公网URL，供即梦使用
 let lastGeneratedImageUrl = null;  // 左侧最近生成的图片URL（公网可访问）
 let lastGeneratedImageFilename = null; // 左侧最近生成图片的文件名
 let referenceImageUrls = [null, null, null, null, null, null, null, null, null]; // 左侧文生图使用的参考图Base64 URL，最多9张
+let videoRefImageUrls = [null, null, null, null, null]; // 右侧视频r2v参考图Base64 URL，最多5张
 let pollTimer = null;
 let pollStartTime = null;
+let lastVideoUrl = null;    // 最近生成的视频CDN URL（供 VLM 评审）
+let lastVideoPrompt = null; // 最近视频生成的提示词
 
 // 新建人物表单中的临时图片数据 [{filename, base64_url}, ...]
 let newCharImages = [null, null, null, null, null, null, null, null, null];
@@ -18,7 +21,7 @@ let selectedCharIds = [];
 let selectedCharsCache = {};
 
 const POLL_INTERVAL = 5000; // 5秒
-const POLL_TIMEOUT = 600000; // 10分钟
+const POLL_TIMEOUT = 3600000; // 1小时
 
 // ==================== 工具函数 ====================
 
@@ -193,7 +196,99 @@ function clearRefImage(event, index) {
     if (fileInput) fileInput.value = '';
 }
 
-// ==================== 阶段1: 生成图片 ====================
+/**
+ * 初始化视频参考图插槽（r2v模式）
+ */
+function initVideoRefSlots() {
+    const container = document.getElementById('video-ref-slots');
+    if (!container) return;
+    container.innerHTML = '';
+    for (let i = 0; i < 5; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'upload-slot';
+        slot.innerHTML = `
+            <div class="slot-label">图${i + 1}</div>
+            <div class="upload-box" onclick="document.getElementById('vref-image-${i}').click()">
+                <div class="upload-placeholder" id="placeholder-vref-${i}">
+                    <div class="upload-icon">+</div>
+                    <small>上传参考图</small>
+                </div>
+                <img class="preview-img" id="preview-vref-${i}" src="" style="display:none;">
+                <button class="ref-clear-btn" id="clear-vref-${i}" onclick="clearVideoRefImage(event, ${i})" style="display:none;">×</button>
+                <input type="file" id="vref-image-${i}" accept="image/*" style="display:none;" onchange="handleVideoRefUpload(this, ${i})">
+            </div>
+        `;
+        container.appendChild(slot);
+    }
+}
+
+/**
+ * 处理视频参考图上传
+ */
+async function handleVideoRefUpload(input, index) {
+    const file = input.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+        showToast('请上传图片文件', 'error');
+        return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+        showToast('图片大小不能超过20MB', 'error');
+        return;
+    }
+    // 立即显示本地预览
+    const preview = document.getElementById(`preview-vref-${index}`);
+    const placeholder = document.getElementById(`placeholder-vref-${index}`);
+    const clearBtn = document.getElementById(`clear-vref-${index}`);
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        preview.src = e.target.result;
+        preview.style.display = 'block';
+        placeholder.style.display = 'none';
+        if (clearBtn) clearBtn.style.display = 'flex';
+    };
+    reader.readAsDataURL(file);
+    // 上传到服务器
+    const formData = new FormData();
+    formData.append('image', file);
+    try {
+        showToast(`正在上传视频参考图${index + 1}...`);
+        const response = await fetch('/api/upload-image', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        if (result.success) {
+            videoRefImageUrls[index] = result.base64_url;
+            const uploaded = videoRefImageUrls.filter(u => u !== null).length;
+            showToast(`视频参考图${index + 1}上传成功（已上传${uploaded}张）`, 'success');
+        } else {
+            showToast('上传失败: ' + result.error, 'error');
+            clearVideoRefImage(null, index);
+        }
+    } catch (error) {
+        showToast('上传失败: ' + error.message, 'error');
+        clearVideoRefImage(null, index);
+    }
+    input.value = '';
+}
+
+/**
+ * 清除视频参考图
+ */
+function clearVideoRefImage(event, index) {
+    if (event) event.stopPropagation();
+    videoRefImageUrls[index] = null;
+    const preview = document.getElementById(`preview-vref-${index}`);
+    const placeholder = document.getElementById(`placeholder-vref-${index}`);
+    const clearBtn = document.getElementById(`clear-vref-${index}`);
+    const fileInput = document.getElementById(`vref-image-${index}`);
+    preview.src = '';
+    preview.style.display = 'none';
+    placeholder.style.display = 'flex';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (fileInput) fileInput.value = '';
+}
 
 /**
  * 生成图片
@@ -470,16 +565,28 @@ async function handleLocalImageUpload(input) {
  * 生成视频
  */
 async function generateVideo() {
-    const model = document.getElementById('image-model').value;
+    const model = document.getElementById('video-model').value;
+    const isR2v = (model === 'r2v');
+    
     // 即梦使用MinIO https URL；通义万相使用 oss:// URL
     const imageUrlInput = document.getElementById('image-url-input').value.trim();
     const imageUrl = (model === 'jimeng')
         ? (videoSourceHttpsUrl || videoSourceImageUrl || imageUrlInput)
         : (videoSourceImageUrl || imageUrlInput);
     
+    // r2v模式：首帧图可选（可以是纯背景），但必须有参考图或首帧图至少一个
+    // i2v模式：首帧图必填
     if (!imageUrl) {
-        // 即梦支持纯文生视频，通义万相必须有图片
-        if (model !== 'jimeng') {
+        if (model === 'jimeng') {
+            // 即梦支持纯文生视频
+        } else if (isR2v) {
+            // r2v 可以没有首帧图，但检查是否有参考图
+            const videoRefs = videoRefImageUrls.filter(u => u !== null);
+            if (videoRefs.length === 0) {
+                showToast('参考生视频需要至少上传一张人物参考图或首帧图', 'error');
+                return;
+            }
+        } else {
             showToast('请上传图片或输入图片URL', 'error');
             return;
         }
@@ -502,11 +609,18 @@ async function generateVideo() {
         return;
     }
     
-    // 验证时长范围 (wan2.7-i2v 支持 2-15 秒)
-    if (duration < 2 || duration > 15) {
-        showToast('视频时长必须在2-15秒之间', 'error');
+    // 保存当前提示词供评审使用
+    lastVideoPrompt = prompt;
+    
+    // 验证时长范围
+    const maxDuration = isR2v ? 10 : 15;
+    if (duration < 2 || duration > maxDuration) {
+        showToast(`视频时长必须在2-${maxDuration}秒之间`, 'error');
         return;
     }
+    
+    // 收集r2v参考图
+    const videoRefs = isR2v ? videoRefImageUrls.filter(u => u !== null) : [];
     
     // 更新UI
     showSectionLoading('video', '创建视频任务中...', 20);
@@ -517,9 +631,25 @@ async function generateVideo() {
     try {
         showToast('正在创建视频任务...');
         
-        console.log('发送视频生成请求:', {
-            image_url: imageUrl.substring(0, 100) + '...',
+        const reqBody = {
+            image_url: imageUrl || '',
             prompt: prompt,
+            resolution: resolution,
+            duration: Math.min(duration, maxDuration),
+            model: model,
+            ...apiCfg.video
+        };
+        
+        // r2v 模式发送参考图
+        if (isR2v && videoRefs.length > 0) {
+            reqBody.reference_images = videoRefs;
+        }
+        
+        console.log('发送视频生成请求:', {
+            model: model,
+            has_image: !!imageUrl,
+            ref_count: videoRefs.length,
+            prompt: prompt.substring(0, 50) + '...',
             resolution: resolution,
             duration: duration
         });
@@ -529,14 +659,7 @@ async function generateVideo() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                image_url: imageUrl,
-                prompt: prompt,
-                resolution: resolution,
-                duration: duration,
-                model: document.getElementById('image-model').value,
-                ...apiCfg.video  // 包含页面自定义的api_key和base_url
-            })
+            body: JSON.stringify(reqBody)
         });
         
         const result = await response.json();
@@ -593,6 +716,9 @@ function startPolling() {
                 console.log('result.filename:', result.filename);
                 console.log('result.video_url:', result.video_url);
                 
+                // 保存 CDN URL 供评审使用
+                lastVideoUrl = result.video_url || null;
+                
                 // 优先使用本地filename，如果下载失败则使用原始URL
                 if (result.filename && result.filename !== 'undefined' && result.filename !== undefined) {
                     console.log('📁 使用本地文件:', result.filename);
@@ -646,6 +772,11 @@ function displayGeneratedVideo(filename) {
     videoResultCard.style.display = 'block';
     
     currentVideoFilename = filename;
+
+    // 显示评审按钮，重置上次评审结果
+    document.getElementById('btn-review-video').style.display = 'inline-block';
+    document.getElementById('video-review-result').style.display = 'none';
+    document.getElementById('review-content').innerHTML = '';
 }
 
 /**
@@ -661,13 +792,247 @@ function displayGeneratedVideoFromUrl(url) {
     generatedVideo.style.display = 'block';
     videoPlaceholder.style.display = 'none';
     videoResultCard.style.display = 'block';
+
+    // 显示评审按钮，重置上次评审结果
+    document.getElementById('btn-review-video').style.display = 'inline-block';
+    document.getElementById('video-review-result').style.display = 'none';
+    document.getElementById('review-content').innerHTML = '';
 }
 
 // ==================== 一键生成 ====================
 
 /**
- * 完整流程一键生成
+ * VLM 视频内容评审
  */
+async function reviewVideoWithVLM() {
+    if (!lastVideoUrl) {
+        showToast('暂无视频CDN URL，无法评审（尝试在视频生成后立即评审）', 'error');
+        return;
+    }
+    const scenePrompt = lastVideoPrompt || document.getElementById('video-prompt').value.trim();
+
+    const loadingEl  = document.getElementById('review-loading');
+    const contentEl  = document.getElementById('review-content');
+    const resultArea = document.getElementById('video-review-result');
+    const btn        = document.getElementById('btn-review-video');
+
+    // 显示 loading
+    resultArea.style.display = 'block';
+    loadingEl.style.display  = 'flex';
+    contentEl.innerHTML      = '';
+    btn.disabled             = true;
+    btn.textContent          = '评审中...';
+
+    try {
+        const resp = await fetch('/api/review-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_url: lastVideoUrl, scene_prompt: scenePrompt })
+        });
+        const data = await resp.json();
+        loadingEl.style.display = 'none';
+
+        if (data.success) {
+            renderReviewResult(data.review);
+        } else {
+            contentEl.innerHTML = `<p class="review-error">评审失败：${data.error}</p>`;
+        }
+    } catch (e) {
+        loadingEl.style.display = 'none';
+        contentEl.innerHTML = `<p class="review-error">请求异常：${e.message}</p>`;
+    } finally {
+        btn.disabled    = false;
+        btn.textContent = '🔍 VLM评审';
+    }
+}
+
+/**
+ * 渲染评审结果卡片
+ */
+function renderReviewResult(review) {
+    const contentEl = document.getElementById('review-content');
+
+    const scoreColor = (s) => s >= 8 ? '#52c41a' : s >= 6 ? '#faad14' : '#ff4d4f';
+    const scoreBar   = (s) => `<div class="review-score-bar"><div class="review-score-fill" style="width:${s*10}%;background:${scoreColor(s)}"></div></div>`;
+
+    const dims = [
+        { key: 'scene_match',      label: '场景匹配' },
+        { key: 'motion_quality',   label: '动作质量' },
+        { key: 'visual_quality',   label: '画面质量' },
+        { key: 'consistency',      label: '人物一致性' },
+    ];
+
+    let dimsHtml = dims.map(d => {
+        const dim = review[d.key] || {};
+        const s   = dim.score || 0;
+        return `
+        <div class="review-dim">
+            <div class="review-dim-header">
+                <span class="review-dim-label">${d.label}</span>
+                <span class="review-dim-score" style="color:${scoreColor(s)}">${s}/10</span>
+            </div>
+            ${scoreBar(s)}
+            <p class="review-dim-comment">${dim.comment || ''}</p>
+        </div>`;
+    }).join('');
+
+    const overall = review.overall_score || 0;
+    contentEl.innerHTML = `
+        <div class="review-overall">
+            <span class="review-overall-label">综合评分</span>
+            <span class="review-overall-score" style="color:${scoreColor(overall)}">${overall}</span>
+            <span class="review-overall-unit">/10</span>
+        </div>
+        <div class="review-dims">${dimsHtml}</div>
+        ${review.suggestion ? `<div class="review-suggestion"><span>💡 改进建议：</span>${review.suggestion}</div>` : ''}
+    `;
+
+    // 保存这次 vlm 输出，并显示反馈输入区
+    lastVlmOutput = review;
+    const fbArea = document.getElementById('review-feedback-area');
+    if (fbArea) {
+        fbArea.style.display = 'block';
+        document.getElementById('review-feedback-text').value = '';
+        document.getElementById('feedback-submit-status').textContent = '';
+    }
+}
+
+let lastVlmOutput = null; // 最近VLM评审输出，供反馈存储使用
+
+/**
+ * 提交用户反馈
+ */
+async function submitReviewFeedback() {
+    const text = document.getElementById('review-feedback-text').value.trim();
+    if (!text) { showToast('请先写下你的看法', 'error'); return; }
+
+    const btn       = document.getElementById('btn-submit-feedback');
+    const statusEl  = document.getElementById('feedback-submit-status');
+    btn.disabled    = true;
+    statusEl.style.color = '';
+    statusEl.textContent = '提交中...';
+
+    try {
+        const resp = await fetch('/api/review-feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                video_url:     lastVideoUrl || '',
+                scene_prompt:  lastVideoPrompt || '',
+                vlm_output:    lastVlmOutput || {},
+                user_feedback: text
+            })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            statusEl.style.color = '#52c41a';
+            statusEl.textContent = `已保存，共 ${data.total_feedbacks} 条反馈`;
+            document.getElementById('review-feedback-text').value = '';
+            // 更新进化面板
+            loadReviewStatus();
+        } else {
+            statusEl.style.color = '#ff4d4f';
+            statusEl.textContent = '保存失败：' + data.error;
+        }
+    } catch (e) {
+        statusEl.style.color = '#ff4d4f';
+        statusEl.textContent = '请求异常：' + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+/**
+ * 触发提示词进化
+ */
+async function evolveReviewPrompt() {
+    const btn      = document.getElementById('btn-evolve');
+    const statusEl = document.getElementById('evolve-status');
+    btn.disabled   = true;
+    btn.textContent = '分析中...';
+    statusEl.style.color = '';
+    statusEl.textContent = '千问正在分析反馈并重写评审标准，请稍候...';
+
+    try {
+        const resp = await fetch('/api/evolve-review-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}'
+        });
+        const data = await resp.json();
+        if (data.success) {
+            statusEl.style.color = '#52c41a';
+            statusEl.textContent = `进化成功！新版本 ${data.new_version}，基于 ${data.feedback_count} 条反馈生成`;
+            loadReviewStatus();
+            showToast(`评审标准已进化到 ${data.new_version}`, 'success');
+        } else {
+            statusEl.style.color = '#ff4d4f';
+            statusEl.textContent = '进化失败：' + data.error;
+        }
+    } catch (e) {
+        statusEl.style.color = '#ff4d4f';
+        statusEl.textContent = '请求异常：' + e.message;
+    } finally {
+        btn.disabled    = false;
+        btn.textContent = '✨ 优化评审标准（千问分析反馈）';
+    }
+}
+
+/**
+ * 加载评审进化状态
+ */
+async function loadReviewStatus() {
+    try {
+        const resp = await fetch('/api/review-status');
+        const data = await resp.json();
+        if (!data.success) return;
+
+        const card = document.getElementById('review-evolution-card');
+        // 有反馈或多个版本时才显示进化面板
+        if (data.feedback_count > 0 || data.versions.length > 1) {
+            card.style.display = 'block';
+        }
+
+        document.getElementById('review-version-badge').textContent = data.current_version;
+        document.getElementById('feedback-count').textContent = data.feedback_count;
+
+        // 渲染版本历史
+        const historyEl = document.getElementById('evolve-history');
+        if (data.versions.length > 0) {
+            historyEl.innerHTML = '<div class="evolve-history-title">版本历史</div>' +
+                data.versions.map(v => {
+                    const isLatest = v.version === data.current_version;
+                    const dt = v.created_at ? v.created_at.replace('T', ' ').substring(0, 16) : '';
+                    const label = v.feedback_count_at_creation === 0
+                        ? '初始版本'
+                        : `基于 ${v.feedback_count_at_creation} 条反馈`;
+                    return `<div class="evolve-version-item ${isLatest ? 'is-current' : ''}">
+                        <div class="evolve-version-header">
+                            <span class="evolve-version-num">${v.version}</span>
+                            <span class="evolve-version-meta">${dt} &nbsp; ${label}</span>
+                            ${isLatest ? '<span class="evolve-current-tag">当前</span>' : ''}
+                        </div>
+                        <div class="evolve-version-preview" id="preview-${v.version}" style="display:none;">${v.prompt_preview}...</div>
+                        <button class="evolve-version-toggle" onclick="togglePromptPreview('${v.version}')">查看提示词</button>
+                    </div>`;
+                }).join('');
+        } else {
+            historyEl.innerHTML = '';
+        }
+    } catch (e) {
+        console.warn('加载评审状态失败:', e.message);
+    }
+}
+
+/**
+ * 展开/折叠提示词预览
+ */
+function togglePromptPreview(version) {
+    const el = document.getElementById(`preview-${version}`);
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ==================== 一键生成 ==================== (second)
 async function fullPipeline() {
     const imagePrompt = document.getElementById('image-prompt').value.trim();
     const videoPrompt = document.getElementById('video-prompt').value.trim();
@@ -778,7 +1143,43 @@ window.addEventListener('load', () => {
     showToast('欢迎使用通义万相视频生成器!', 'info');
     loadSettings();      // 加载API设置
     loadCharacters();    // 加载人物库
+    initVideoRefSlots(); // 初始化视频参考图插槽
 });
+
+/**
+ * 视频模型切换时的 UI 联动
+ */
+function onVideoModelChange(model) {
+    const firstFrameReq = document.getElementById('first-frame-required');
+    const firstFrameHint = document.getElementById('first-frame-hint');
+    const refHint = document.getElementById('ref-hint');
+    const refSlots = document.getElementById('video-ref-slots');
+    const durationHint = document.getElementById('duration-hint');
+    const durationInput = document.getElementById('video-duration');
+
+    if (model === 'r2v') {
+        // r2v 模式：首帧图变为可选，参考图生效，时长上限10秒
+        firstFrameReq.style.display = 'none';
+        firstFrameHint.textContent = '首帧图可选（r2v支持纯参考图生成人物入场）';
+        refHint.textContent = '当前生效：人物三视图/道具/场景，提示词中用“图1”“图2”指代';
+        refHint.style.color = '';
+        refSlots.style.opacity = '1';
+        refSlots.style.pointerEvents = 'auto';
+        durationHint.textContent = '2-10秒（r2v最长10秒）';
+        durationInput.max = 10;
+        if (parseInt(durationInput.value) > 10) durationInput.value = 10;
+    } else {
+        // i2v / 即梦模式：参考图不生效，视觉上灰化提示
+        firstFrameReq.style.display = 'inline';
+        firstFrameHint.textContent = '视频第一帧的画面，可以是含人物的图或纯背景场景';
+        refHint.textContent = '当前模型不支持参考图，请切换到 r2v 模型';
+        refHint.style.color = '#e74c3c';
+        refSlots.style.opacity = '0.4';
+        refSlots.style.pointerEvents = 'none';
+        durationHint.textContent = '2-15秒';
+        durationInput.max = 15;
+    }
+}
 
 
 // ==================== API 设置 ====================
@@ -1117,26 +1518,50 @@ function renderScenes(data) {
             <div class="prompt-block">
                 <div class="prompt-label">
                     <span>🖼️ 文生图提示词</span>
-                    <button class="btn-copy" onclick="copyText(this, 'img-prompt-${scene.scene_number}')">&#x2398; 复制</button>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <span class="prompt-editable-hint">可直接编辑</span>
+                        <button class="btn-copy" onclick="copyText(this, 'img-prompt-${scene.scene_number}')">&#x2398; 复制</button>
+                    </div>
                 </div>
-                <textarea class="prompt-textarea" id="img-prompt-${scene.scene_number}" rows="6">${scene.image_prompt}</textarea>
+                <textarea class="prompt-textarea prompt-textarea-editable" id="img-prompt-${scene.scene_number}" rows="6" placeholder="文生图提示词..."></textarea>
             </div>
 
             <div class="prompt-block">
                 <div class="prompt-label">
                     <span>🎬 视频提示词</span>
-                    <button class="btn-copy" onclick="copyText(this, 'vid-prompt-${scene.scene_number}')">&#x2398; 复制</button>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <span class="prompt-editable-hint">可直接编辑</span>
+                        <button class="btn-copy" onclick="copyText(this, 'vid-prompt-${scene.scene_number}')">&#x2398; 复制</button>
+                    </div>
                 </div>
-                <textarea class="prompt-textarea" id="vid-prompt-${scene.scene_number}" rows="5">${scene.video_prompt}</textarea>
+                <textarea class="prompt-textarea prompt-textarea-editable" id="vid-prompt-${scene.scene_number}" rows="5" placeholder="视频提示词..."></textarea>
             </div>
 
             <button class="btn btn-sm btn-success btn-send-to-studio"
                 onclick="sendToStudio(${scene.scene_number})">
                 → 发送到创作工作台
             </button>
+
+            <!-- 评审结果区（评审后注入） -->
+            <div class="scene-review-inline" id="scene-review-inline-${scene.scene_number}" style="display:none;"></div>
         `;
+
+        // 缓存分镜数据，供评审使用
+        sceneDataCache[scene.scene_number] = scene;
+        // 用 DOM value 赋值，避免 HTML 特殊字符导致 textarea 损坏
+        card.querySelector(`#img-prompt-${scene.scene_number}`).value = scene.image_prompt || '';
+        card.querySelector(`#vid-prompt-${scene.scene_number}`).value = scene.video_prompt || '';
         cardsEl.appendChild(card);
     });
+
+    // 显示全局评审卡片
+    const reviewCard = document.getElementById('scene-review-global-card');
+    if (reviewCard) reviewCard.style.display = 'block';
+    // 重置评审结果
+    const resultEl = document.getElementById('scene-review-global-result');
+    if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; }
+    const statusEl = document.getElementById('review-all-status');
+    if (statusEl) statusEl.textContent = '';
 
     showToast(`分镜生成完成，共 ${scenes.length} 个`, 'success');
 }
@@ -1180,9 +1605,235 @@ function sendToStudio(sceneNumber) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+// ==================== 分镜评审与进化 ====================
+
+// 内存中缓存各分镜数据（供反馈提交使用）
+let sceneDataCache = {}; // { scene_number: sceneObject }
+
 /**
- * 删除人物
+ * 全局评审全部分镜
  */
+async function reviewAllScenes() {
+    const btn = document.getElementById('btn-review-all-scenes');
+    const statusEl = document.getElementById('review-all-status');
+    const resultEl = document.getElementById('scene-review-global-result');
+
+    const scenes = Object.values(sceneDataCache).sort((a, b) => a.scene_number - b.scene_number);
+    if (scenes.length === 0) { showToast('没有分镜数据', 'error'); return; }
+
+    btn.disabled = true;
+    btn.textContent = '全局评审中...';
+    statusEl.textContent = '';
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = '<div class="scene-review-loading">千问正在对全部分镜做全局评审，请稍候...</div>';
+
+    try {
+        const apiCfg = getApiConfig();
+        const resp = await fetch('/api/review-scene', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scenes, api_key: apiCfg.image.api_key || '' })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            renderAllSceneReviews(data.review);
+        } else {
+            resultEl.innerHTML = `<div class="scene-review-error">评审失败：${data.error}</div>`;
+        }
+    } catch (e) {
+        resultEl.innerHTML = `<div class="scene-review-error">请求异常：${e.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 全局评审全部分镜';
+    }
+}
+
+/**
+ * 渲染全局评审结果（注入到各分镜卡片内）
+ */
+function renderAllSceneReviews(review) {
+    const overall = review.overall_score || 0;
+    const scoreColor = s => s >= 8 ? '#52c41a' : s >= 6 ? '#faad14' : '#ff4d4f';
+    const sceneReviews = review.scenes || [];
+
+    // 在每个分镜卡片内注入评审结果
+    sceneReviews.forEach(sr => {
+        const container = document.getElementById(`scene-review-inline-${sr.scene_number}`);
+        if (!container) return;
+        container.style.display = 'block';
+
+        const dims = [
+            { key: 'narrative',          label: '叙事' },
+            { key: 'image_prompt_score', label: '图片提示词' },
+            { key: 'video_prompt_score', label: '视频提示词' },
+            { key: 'transition_score',   label: '衔接' }
+        ];
+        const dimsHtml = dims.map(d => {
+            const s = sr[d.key] ?? '-';
+            return `<span class="scene-review-dim"><span class="scene-review-dim-label">${d.label}</span><span class="scene-review-dim-score" style="color:${scoreColor(s)}">${s}</span></span>`;
+        }).join('');
+
+        const scene = sceneDataCache[sr.scene_number];
+        const duration = scene?.duration ? ` ⏱${scene.duration}` : '';
+
+        container.innerHTML = `
+            <div class="scene-review-inline-inner">
+                <div class="scene-review-inline-header">
+                    <span class="scene-review-inline-score" style="color:${scoreColor(sr.score)}">${sr.score}/10</span>
+                    <span class="scene-review-inline-title">分镜 ${sr.scene_number}：${scene?.scene_title || ''}${duration}</span>
+                </div>
+                <div class="scene-review-dims">${dimsHtml}</div>
+                ${sr.suggestion ? `<div class="scene-review-suggestion">💡 ${sr.suggestion}</div>` : ''}
+                <div class="scene-feedback-area">
+                    <textarea id="scene-fb-text-${sr.scene_number}" class="scene-fb-textarea" rows="2" placeholder="对这个分镜的改进意见..."></textarea>
+                    <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                        <button class="btn btn-sm btn-primary" id="btn-scene-fb-${sr.scene_number}"
+                            onclick="submitSceneFeedback(${sr.scene_number})">💾 提交反馈</button>
+                        <span id="scene-fb-status-${sr.scene_number}" style="font-size:12px;"></span>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    // 在顶部按钮旁边显示整体评分
+    const statusEl = document.getElementById('review-all-status');
+    if (statusEl) {
+        statusEl.style.color = scoreColor(overall);
+        statusEl.innerHTML = `<b>${overall}/10</b> — ${review.overall_comment || ''}`;
+    }
+}
+
+/**
+ * 提交单个分镜反馈
+ */
+async function submitSceneFeedback(sceneNumber) {
+    const text = document.getElementById(`scene-fb-text-${sceneNumber}`)?.value.trim();
+    if (!text) { showToast('请先写下你的反馈', 'error'); return; }
+
+    const btn      = document.getElementById(`btn-scene-fb-${sceneNumber}`);
+    const statusEl = document.getElementById(`scene-fb-status-${sceneNumber}`);
+    btn.disabled   = true;
+    statusEl.textContent = '提交中...';
+
+    const scene  = sceneDataCache[sceneNumber] || {};
+
+    try {
+        const resp = await fetch('/api/scene-feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scene_number:  sceneNumber,
+                scene_title:   scene.scene_title || '',
+                scene_data:    scene,
+                review_output: {},
+                user_feedback: text
+            })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            statusEl.style.color = '#52c41a';
+            statusEl.textContent = `已保存，共 ${data.total_feedbacks} 条`;
+            document.getElementById(`scene-fb-text-${sceneNumber}`).value = '';
+            loadSceneStatus();
+        } else {
+            statusEl.style.color = '#ff4d4f';
+            statusEl.textContent = '保存失败：' + data.error;
+        }
+    } catch (e) {
+        statusEl.style.color = '#ff4d4f';
+        statusEl.textContent = '请求异常：' + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+/**
+ * 触发分镜生成提示词进化
+ */
+async function evolveScenePrompt() {
+    const btn      = document.getElementById('btn-evolve-scene');
+    const statusEl = document.getElementById('scene-evolve-status');
+    btn.disabled   = true;
+    btn.textContent = '分析中...';
+    statusEl.style.color = '';
+    statusEl.textContent = '千问正在分析反馈并重写分镜生成标准，请稍候...';
+
+    try {
+        const resp = await fetch('/api/evolve-scene-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}'
+        });
+        const data = await resp.json();
+        if (data.success) {
+            statusEl.style.color = '#52c41a';
+            statusEl.textContent = `进化成功！新版本 ${data.new_version}，基于 ${data.feedback_count} 条反馈生成`;
+            loadSceneStatus();
+            showToast(`分镜生成标准已进化到 ${data.new_version}`, 'success');
+        } else {
+            statusEl.style.color = '#ff4d4f';
+            statusEl.textContent = '进化失败：' + data.error;
+        }
+    } catch (e) {
+        statusEl.style.color = '#ff4d4f';
+        statusEl.textContent = '请求异常：' + e.message;
+    } finally {
+        btn.disabled    = false;
+        btn.textContent = '✨ 优化生成标准（千问分析反馈）';
+    }
+}
+
+/**
+ * 加载分镜进化面板状态
+ */
+async function loadSceneStatus() {
+    try {
+        const resp = await fetch('/api/scene-status');
+        const data = await resp.json();
+        if (!data.success) return;
+
+        const card = document.getElementById('scene-evolution-card');
+        if (data.feedback_count > 0 || data.versions.length > 1) {
+            card.style.display = 'block';
+        }
+        document.getElementById('scene-version-badge').textContent = data.current_version;
+        document.getElementById('scene-feedback-count').textContent = data.feedback_count;
+
+        const historyEl = document.getElementById('scene-evolve-history');
+        if (data.versions.length > 0) {
+            historyEl.innerHTML = '<div class="evolve-history-title">版本历史</div>' +
+                data.versions.map(v => {
+                    const isLatest = v.version === data.current_version;
+                    const dt = v.created_at ? v.created_at.replace('T', ' ').substring(0, 16) : '';
+                    const label = v.feedback_count_at_creation === 0
+                        ? '初始版本'
+                        : `基于 ${v.feedback_count_at_creation} 条反馈`;
+                    return `<div class="evolve-version-item ${isLatest ? 'is-current' : ''}">
+                        <div class="evolve-version-header">
+                            <span class="evolve-version-num">${v.version}</span>
+                            <span class="evolve-version-meta">${dt} &nbsp; ${label}</span>
+                            ${isLatest ? '<span class="evolve-current-tag">当前</span>' : ''}
+                        </div>
+                        <div class="evolve-version-preview" id="scene-preview-${v.version}" style="display:none;">${v.prompt_preview}...</div>
+                        <button class="evolve-version-toggle" onclick="toggleScenePromptPreview('${v.version}')">查看提示词</button>
+                    </div>`;
+                }).join('');
+        } else {
+            historyEl.innerHTML = '';
+        }
+    } catch (e) {
+        console.warn('加载分镜状态失败:', e.message);
+    }
+}
+
+/**
+ * 展开/折叠分镜提示词预览
+ */
+function toggleScenePromptPreview(version) {
+    const el = document.getElementById(`scene-preview-${version}`);
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
 async function deleteCharacter(charId, charName) {
     if (!confirm(`确定删除人物「${charName}」？`)) return;
     try {
@@ -1328,3 +1979,15 @@ async function saveCharacter() {
         btn.textContent = '💾 保存人物';
     }
 }
+
+// 页面加载时初始化视频模型状态
+(function initVideoModel() {
+    const videoModel = document.getElementById('video-model');
+    if (videoModel) onVideoModelChange(videoModel.value);
+})();
+
+// 页面加载时初始化评审进化面板状态
+loadReviewStatus();
+
+// 页面加载时初始化分镜进化面板状态
+loadSceneStatus();

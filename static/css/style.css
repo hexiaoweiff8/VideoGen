@@ -859,6 +859,146 @@ header h1 {
     background: #6c7a89;
 }
 
+.btn-info {
+    background: rgba(74,144,226,0.85);
+    color: white;
+    border: none;
+}
+
+.btn-info:hover:not(:disabled) {
+    background: rgba(74,144,226,1);
+}
+
+/* ==================== VLM 评审结果 ==================== */
+#video-review-result {
+    margin-top: 16px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding-top: 16px;
+}
+
+.review-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    padding: 12px 0;
+}
+
+.review-loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(74,144,226,0.3);
+    border-top-color: #4a90e2;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+.review-overall {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 8px;
+}
+
+.review-overall-label {
+    font-size: 14px;
+    color: var(--text-secondary);
+    flex: 1;
+}
+
+.review-overall-score {
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.review-overall-unit {
+    font-size: 16px;
+    color: var(--text-secondary);
+}
+
+.review-dims {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.review-dim {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.review-dim-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.review-dim-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.review-dim-score {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.review-score-bar {
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.review-score-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.4s ease;
+}
+
+.review-dim-comment {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.review-suggestion {
+    background: rgba(250,173,20,0.08);
+    border: 1px solid rgba(250,173,20,0.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+.review-suggestion span {
+    color: #faad14;
+    font-weight: 600;
+}
+
+.review-error {
+    color: #ff4d4f;
+    font-size: 13px;
+    padding: 8px 0;
+    margin: 0;
+}
+
 /* ==================== 状态显示 ==================== */
 .status-item {
     display: flex;
@@ -1318,6 +1458,77 @@ header h1 {
     box-shadow: 0 0 0 3px rgba(102,126,234,0.12);
 }
 
+/* 可编辑状态强化 */
+.prompt-textarea-editable {
+    cursor: text;
+    border-color: #c6d0e0;
+    background: #fdfdff;
+}
+
+.prompt-textarea-editable:hover {
+    border-color: #667eea;
+    background: #fff;
+}
+
+/* 可编辑提示 */
+.prompt-editable-hint {
+    font-size: 11px;
+    color: #667eea;
+    background: rgba(102,126,234,0.1);
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 500;
+    letter-spacing: .02em;
+    flex-shrink: 0;
+}
+
+/* ==================== 视频素材区 ==================== */
+.video-material-section {
+    margin-bottom: 18px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.video-material-section:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.video-material-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.material-tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .03em;
+    flex-shrink: 0;
+}
+
+.material-tag-firstframe {
+    background: rgba(74,144,226,0.2);
+    color: #4a90e2;
+    border: 1px solid rgba(74,144,226,0.35);
+}
+
+.material-tag-ref {
+    background: rgba(82,196,26,0.2);
+    color: #52c41a;
+    border: 1px solid rgba(82,196,26,0.35);
+}
+
+.material-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
 .btn-copy {
     background: transparent;
     border: 1px solid #cbd5e0;
@@ -1405,4 +1616,377 @@ header h1 {
     border-radius: 3px;
     transition: width 0.5s ease;
     width: 5%;
+}
+
+/* ==================== VLM评审反馈区 ==================== */
+.feedback-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    display: block;
+}
+
+#review-feedback-text {
+    width: 100%;
+    min-height: 80px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.2s;
+    color: var(--text-primary);
+    background: #fafafa;
+}
+
+#review-feedback-text:focus {
+    border-color: var(--primary-color);
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+}
+
+#feedback-submit-status {
+    font-size: 12px;
+    margin-left: 8px;
+}
+
+/* ==================== VLM评审进化面板 ==================== */
+.card-header-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.card-header-row h3 {
+    margin: 0;
+}
+
+.review-version-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    background: linear-gradient(135deg, #4a90e2, #764ba2);
+    color: #fff;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.evolve-history-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 14px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.evolve-version-item {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    background: #fafafa;
+    transition: border-color 0.2s;
+}
+
+.evolve-version-item.is-current {
+    border-color: var(--primary-color);
+    background: #f0f7ff;
+}
+
+.evolve-version-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.evolve-version-num {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--primary-color);
+    min-width: 28px;
+}
+
+.evolve-version-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    flex: 1;
+}
+
+.evolve-current-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    background: var(--success-color);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.evolve-version-preview {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: #fff;
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.evolve-version-toggle {
+    margin-top: 7px;
+    padding: 3px 10px;
+    font-size: 12px;
+    color: var(--primary-color);
+    background: transparent;
+    border: 1px solid var(--primary-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.evolve-version-toggle:hover {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+#evolve-status {
+    font-size: 13px;
+    margin-top: 6px;
+    min-height: 18px;
+}
+
+/* ==================== 分镜卡片操作行 ==================== */
+.scene-card-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+/* ==================== 分镜评审结果区 ==================== */
+.scene-review-global-card {
+    margin-bottom: 16px;
+}
+
+.scene-review-global-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* 分镜卡片内评审区 */
+.scene-review-inline {
+    margin-top: 14px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    background: #f8faff;
+}
+
+.scene-review-inline-inner {
+    padding: 10px 12px;
+}
+
+.scene-review-inline-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.scene-review-inline-score {
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.scene-review-inline-title {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.scene-review-result {
+    margin-top: 10px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+
+.scene-review-loading {
+    padding: 12px 14px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: #fafafa;
+}
+
+.scene-review-error {
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--error-color);
+    background: #fff2f0;
+}
+
+.scene-review-inner {
+    padding: 12px 14px;
+    background: #f8faff;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.scene-review-overall-block {
+    padding: 14px 16px;
+    background: #f8faff;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.scene-review-overall-comment {
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: #fffbe6;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-top: 10px;
+    line-height: 1.5;
+}
+
+.scene-review-scenes-list {
+    padding: 8px 12px;
+}
+
+.scene-review-scene-item {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: #fff;
+}
+
+.scene-review-scene-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.scene-review-scene-num {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--primary-color);
+}
+
+.scene-review-scene-title {
+    font-size: 13px;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.scene-review-scene-score {
+    font-size: 16px;
+    font-weight: 800;
+}
+
+.scene-review-overall {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 10px;
+}
+
+.scene-review-overall-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.scene-review-overall-score {
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.scene-review-overall-unit {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.scene-review-dims {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.scene-review-dim {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #fafafa;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-width: 56px;
+}
+
+.scene-review-dim-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.scene-review-dim-score {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.scene-review-suggestion {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: #fffbe6;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-top: 4px;
+    line-height: 1.5;
+}
+
+/* 分镜评审反馈区 */
+.scene-feedback-area {
+    padding: 10px 14px 14px;
+    background: #fff;
+}
+
+.scene-fb-textarea {
+    width: 100%;
+    min-height: 64px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+    background: #fafafa;
+    transition: border-color 0.2s;
+}
+
+.scene-fb-textarea:focus {
+    border-color: var(--primary-color);
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+}
+
+#scene-evolve-status {
+    font-size: 13px;
+    margin-top: 6px;
+    min-height: 18px;
 }
