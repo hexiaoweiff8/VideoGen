@@ -19,6 +19,10 @@ let newCharImages = [null, null, null, null, null, null, null, null, null];
 let selectedCharIds = [];
 // 人物数据缓存 { charId: characterObject }
 let selectedCharsCache = {};
+// 分镜Tab已选人物ID数组
+let sceneCharIds = [];
+// 分镜Tab人物数据缓存
+let sceneCharsCache = {};
 
 const POLL_INTERVAL = 5000; // 5秒
 const POLL_TIMEOUT = 3600000; // 1小时
@@ -1384,6 +1388,98 @@ function reloadRefSlotsFromChars() {
 }
 
 
+// ==================== 分镜人物选择 ====================
+
+/**
+ * 加载分镜Tab人物列表
+ */
+async function loadSceneCharacters() {
+    try {
+        const resp = await fetch('/api/characters');
+        const data = await resp.json();
+        if (data.success) renderSceneCharList(data.characters);
+    } catch(e) {
+        console.error('加载分镜人物列表失败', e);
+    }
+}
+
+/**
+ * 渲染分镜人物选择列表
+ */
+function renderSceneCharList(characters) {
+    const select = document.getElementById('scene-char-select');
+    const empty = document.getElementById('scene-char-empty');
+
+    // 清空
+    select.innerHTML = '';
+
+    if (!characters || characters.length === 0) {
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+
+    characters.forEach(char => {
+        const card = document.createElement('div');
+        card.className = 'char-card' + (sceneCharIds.includes(char.id) ? ' char-card-selected' : '');
+        card.dataset.charId = char.id;
+        card.innerHTML = `
+            <div class="char-thumb" onclick="toggleSceneChar('${char.id}')">
+                ${char.thumbnail
+                    ? `<img src="${char.thumbnail}" alt="${char.name}">`
+                    : `<div class="char-thumb-placeholder">👤</div>`}
+            </div>
+            <div class="char-info" onclick="toggleSceneChar('${char.id}')">
+                <span class="char-name">${char.name}</span>
+                <span class="char-count">${char.image_count || 0} 张图</span>
+            </div>
+        `;
+        select.appendChild(card);
+    });
+}
+
+/**
+ * 勾选/取消勾选分镜人物
+ */
+async function toggleSceneChar(charId) {
+    const idx = sceneCharIds.indexOf(charId);
+    if (idx !== -1) {
+        sceneCharIds.splice(idx, 1);
+        delete sceneCharsCache[charId];
+    } else {
+        try {
+            const resp = await fetch(`/api/characters/${charId}`);
+            const data = await resp.json();
+            if (!data.success) return;
+            sceneCharsCache[charId] = data.character;
+            sceneCharIds.push(charId);
+        } catch(e) {
+            showToast('加载人物失败: ' + e.message, 'error');
+            return;
+        }
+    }
+
+    // 更新高亮
+    document.querySelectorAll('#scene-char-select .char-card').forEach(el => {
+        el.classList.toggle('char-card-selected', sceneCharIds.includes(el.dataset.charId));
+    });
+
+    const names = sceneCharIds.map(id => sceneCharsCache[id]?.name).filter(Boolean).join('、');
+    if (names) showToast(`已选择：${names}`, 'info');
+    else showToast('已取消人物选择', 'info');
+}
+
+/**
+ * 获取已选分镜人物列表
+ */
+function getSelectedSceneChars() {
+    return sceneCharIds.map(id => {
+        const c = sceneCharsCache[id];
+        return c ? { id: c.id, name: c.name } : null;
+    }).filter(Boolean);
+}
+
+
 // ==================== Tab 切换 ====================
 
 /**
@@ -1433,7 +1529,8 @@ async function splitScenes() {
                 style,
                 num_scenes: numScenes,
                 model: sceneModel,
-                api_key: apiCfg.image.api_key || ''
+                api_key: apiCfg.image.api_key || '',
+                characters: getSelectedSceneChars()
             })
         });
         const result = await resp.json();
@@ -1513,6 +1610,7 @@ function renderScenes(data) {
                 </div>
                 <div class="scene-card-title">${scene.scene_title}</div>
             </div>
+            ${sceneCharIds.length > 0 ? `<div class="scene-chars-tags">${sceneCharIds.map(id => `<span class="scene-char-tag">${sceneCharsCache[id]?.name || ''}</span>`).join('')}</div>` : ''}
             <p class="scene-desc">${scene.scene_desc}</p>
 
             <div class="prompt-block">
@@ -1991,3 +2089,505 @@ loadReviewStatus();
 
 // 页面加载时初始化分镜进化面板状态
 loadSceneStatus();
+
+// 页面加载时初始化分镜人物列表
+loadSceneCharacters();
+
+// ==================== 全自动工作流 ====================
+
+let autoTaskId = null;
+let autoPollTimer = null;
+let autoLogIndex = 0;
+let autoWorkflowMode = 'auto'; // 'auto' | 'step'
+let autoWorkflowPaused = false;
+let autoScenesData = []; // 分镜数据缓存
+let autoSceneCharacters = {}; // 每个分镜的人物选择 {sceneIndex: [charId, ...]}
+let autoCharactersList = []; // 人物列表缓存
+
+/**
+ * 加载人物列表（用于分镜选择）
+ */
+async function loadAutoCharactersForScenes() {
+    try {
+        const resp = await fetch('/api/characters');
+        const data = await resp.json();
+        if (data.success) {
+            autoCharactersList = data.characters;
+        }
+    } catch (e) {
+        console.error('加载人物失败:', e);
+    }
+}
+
+/**
+ * 切换分镜人物选择
+ */
+async function toggleAutoSceneChar(sceneIndex, charId) {
+    if (!autoSceneCharacters[sceneIndex]) {
+        autoSceneCharacters[sceneIndex] = [];
+    }
+    
+    const idx = autoSceneCharacters[sceneIndex].indexOf(charId);
+    if (idx !== -1) {
+        autoSceneCharacters[sceneIndex].splice(idx, 1);
+    } else {
+        autoSceneCharacters[sceneIndex].push(charId);
+    }
+    
+    // 更新UI
+    renderSceneCharSelector(sceneIndex);
+    
+    // 同步到后端
+    if (autoTaskId) {
+        await fetch(`/api/auto-scene-characters/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scene_index: sceneIndex,
+                char_ids: autoSceneCharacters[sceneIndex]
+            })
+        });
+    }
+}
+
+/**
+ * 渲染分镜人物选择器
+ */
+function renderSceneCharSelector(sceneIndex) {
+    const container = document.getElementById(`auto-scene-char-${sceneIndex}`);
+    if (!container || !autoCharactersList.length) return;
+    
+    const selectedIds = autoSceneCharacters[sceneIndex] || [];
+    
+    container.innerHTML = autoCharactersList.map(char => `
+        <div class="char-card ${selectedIds.includes(char.id) ? 'char-card-selected' : ''}"
+             onclick="toggleAutoSceneChar(${sceneIndex}, '${char.id}')">
+            <div class="char-thumb">
+                ${char.thumbnail ? `<img src="${char.thumbnail}" alt="${char.name}">` : '?'}
+            </div>
+            <div class="char-info">
+                <div class="char-name">${char.name}</div>
+                <div class="char-count">${char.image_count || 0} 图</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+/**
+ * 切换全自动/单步模式
+ */
+async function toggleAutoMode() {
+    const checkbox = document.getElementById('auto-mode-toggle');
+    autoWorkflowMode = checkbox.checked ? 'step' : 'auto';
+    document.getElementById('auto-mode-label').textContent = 
+        autoWorkflowMode === 'auto' ? '全自动' : '单步';
+    
+    if (autoTaskId) {
+        await fetch(`/api/auto-control/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'toggle_mode' })
+        });
+    }
+}
+
+/**
+ * 控制全自动工作流
+ */
+async function controlAutoWorkflow(action) {
+    if (!autoTaskId) return;
+    
+    try {
+        const resp = await fetch(`/api/auto-control/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        });
+        const data = await resp.json();
+        
+        if (data.success) {
+            if (action === 'pause') {
+                autoWorkflowPaused = true;
+                document.getElementById('btn-auto-pause').style.display = 'none';
+                document.getElementById('btn-auto-resume').style.display = 'inline-block';
+                showToast('任务已暂停', 'info');
+            } else if (action === 'resume') {
+                autoWorkflowPaused = false;
+                document.getElementById('btn-auto-pause').style.display = 'inline-block';
+                document.getElementById('btn-auto-resume').style.display = 'none';
+                showToast('任务已继续', 'success');
+            } else if (action === 'stop') {
+                clearInterval(autoPollTimer);
+                document.getElementById('btn-auto-start').disabled = false;
+                document.getElementById('btn-auto-pause').style.display = 'none';
+                document.getElementById('btn-auto-resume').style.display = 'none';
+                document.getElementById('btn-auto-stop').style.display = 'none';
+                showToast('任务已停止', 'warning');
+            }
+        }
+    } catch (e) {
+        showToast('控制失败: ' + e.message, 'error');
+    }
+}
+
+/**
+ * 开始全自动工作流
+ */
+async function startAutoWorkflow() {
+    const description = document.getElementById('auto-description').value.trim();
+    if (!description) {
+        showToast('请输入场景描述', 'error');
+        return;
+    }
+    
+    const style = document.getElementById('auto-style').value;
+    const numScenes = document.getElementById('auto-num-scenes').value;
+    const imageModel = document.getElementById('auto-image-model').value;
+    const videoModel = document.getElementById('auto-video-model').value;
+    const scoreThreshold = parseInt(document.getElementById('auto-score-threshold').value) || 7;
+    const maxCycles = parseInt(document.getElementById('auto-max-cycles').value) || 3;
+    
+    // 重置状态
+    autoScenesData = [];
+    autoSceneCharacters = {};
+    autoLogIndex = 0;
+    
+    // 禁用开始按钮，显示控制栏
+    document.getElementById('btn-auto-start').disabled = true;
+    document.getElementById('btn-auto-pause').style.display = 'inline-block';
+    document.getElementById('btn-auto-resume').style.display = 'none';
+    document.getElementById('btn-auto-stop').style.display = 'inline-block';
+    document.getElementById('auto-control-bar').style.display = 'flex';
+    document.getElementById('auto-progress-card').style.display = 'block';
+    document.getElementById('auto-log-card').style.display = 'block';
+    document.getElementById('auto-result-section').style.display = 'none';
+    
+    // 清空日志
+    document.getElementById('auto-log-output').innerHTML = '';
+    
+    addAutoLog('info', '正在启动全自动工作流...');
+    
+    try {
+        const apiCfg = getApiConfig();
+        const resp = await fetch('/api/auto-workflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                description, style, num_scenes: numScenes,
+                image_model: imageModel, video_model: videoModel,
+                score_threshold: scoreThreshold, max_cycles: maxCycles,
+                mode: autoWorkflowMode,
+                api_key: apiCfg.image.api_key || ''
+            })
+        });
+        const data = await resp.json();
+        
+        if (!data.success) {
+            showToast('启动失败: ' + data.error, 'error');
+            addAutoLog('error', '启动失败: ' + data.error);
+            resetAutoControls();
+            return;
+        }
+        
+        autoTaskId = data.task_id;
+        addAutoLog('success', `任务已启动 (ID: ${autoTaskId})`);
+        
+        // 加载人物列表
+        await loadAutoCharactersForScenes();
+        
+        // 开始轮询
+        pollAutoStatus();
+        
+    } catch (e) {
+        showToast('请求异常: ' + e.message, 'error');
+        addAutoLog('error', '请求异常: ' + e.message);
+        resetAutoControls();
+    }
+}
+
+function resetAutoControls() {
+    document.getElementById('btn-auto-start').disabled = false;
+    document.getElementById('btn-auto-pause').style.display = 'none';
+    document.getElementById('btn-auto-resume').style.display = 'none';
+    document.getElementById('btn-auto-stop').style.display = 'none';
+}
+
+/**
+ * 轮询全自动任务状态
+ */
+function pollAutoStatus() {
+    if (autoPollTimer) clearInterval(autoPollTimer);
+    
+    autoPollTimer = setInterval(async () => {
+        try {
+            const resp = await fetch(`/api/auto-status/${autoTaskId}`);
+            const data = await resp.json();
+            
+            if (!data.success) return;
+            
+            // 更新进度
+            updateAutoProgress(data.stage, data.stage_progress, data.total_progress, data.current_action);
+            
+            // 追加新日志
+            if (data.logs && data.logs.length > autoLogIndex) {
+                const newLogs = data.logs.slice(autoLogIndex);
+                appendAutoLogs(newLogs);
+                autoLogIndex = data.logs.length;
+            }
+            
+            // 保存分镜数据
+            if (data.result && data.result.scenes && data.result.scenes.length > 0 && autoScenesData.length === 0) {
+                autoScenesData = data.result.scenes;
+                renderAutoScenesList();
+            }
+            
+            // 检查完成
+            if (data.status === 'completed') {
+                clearInterval(autoPollTimer);
+                renderFinalResults(data.result);
+                resetAutoControls();
+                showToast('全自动流程完成！', 'success');
+            } else if (data.status === 'failed') {
+                clearInterval(autoPollTimer);
+                addAutoLog('error', '流程失败');
+                resetAutoControls();
+            }
+        } catch (e) {
+            console.error('轮询失败:', e);
+        }
+    }, 3000);
+}
+
+/**
+ * 更新全自动进度
+ */
+function updateAutoProgress(stage, stageProgress, totalProgress, action) {
+    // 更新阶段指示器
+    document.querySelectorAll('.stage-badge').forEach(badge => {
+        const badgeStage = badge.dataset.stage;
+        badge.classList.remove('active', 'completed');
+        
+        if (badgeStage === stage) {
+            badge.classList.add('active');
+        } else {
+            const stages = ['storyboard', 'review', 'image', 'video', 'final_review', 'done'];
+            const currentIndex = stages.indexOf(stage);
+            const badgeIndex = stages.indexOf(badgeStage);
+            if (badgeIndex < currentIndex) {
+                badge.classList.add('completed');
+            }
+        }
+    });
+    
+    // 更新阶段进度条
+    const stageBar = document.getElementById('auto-stage-progress-bar');
+    if (stageBar) stageBar.style.width = stageProgress + '%';
+    
+    // 更新总进度条
+    const totalBar = document.getElementById('auto-total-progress-bar');
+    const totalText = document.getElementById('auto-total-progress-text');
+    if (totalBar) totalBar.style.width = totalProgress + '%';
+    if (totalText) totalText.textContent = Math.round(totalProgress) + '%';
+    
+    // 更新当前操作
+    const actionEl = document.getElementById('auto-stage-action');
+    if (actionEl && action) actionEl.textContent = action;
+}
+
+/**
+ * 添加单条日志
+ */
+function addAutoLog(level, message) {
+    const now = new Date();
+    const time = now.toLocaleTimeString('zh-CN', { hour12: false });
+    appendAutoLogs([{ time, message, level }]);
+}
+
+/**
+ * 追加日志条目
+ */
+function appendAutoLogs(logs) {
+    const output = document.getElementById('auto-log-output');
+    if (!output) return;
+    
+    logs.forEach(log => {
+        const entry = document.createElement('div');
+        entry.className = `auto-log-entry ${log.level}`;
+        entry.innerHTML = `<span class="log-time">${log.time}</span><span class="log-message">${log.message}</span>`;
+        output.appendChild(entry);
+    });
+    
+    // 自动滚动到底部
+    output.scrollTop = output.scrollHeight;
+}
+
+/**
+ * 渲染分镜列表
+ */
+function renderAutoScenesList() {
+    const container = document.getElementById('auto-scenes-list');
+    if (!container || !autoScenesData.length) return;
+    
+    container.innerHTML = autoScenesData.map((scene, index) => `
+        <div class="auto-scene-card" id="auto-scene-card-${index}" data-status="pending">
+            <div class="scene-card-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div>
+                    <span class="scene-num-badge">分镜 ${scene.scene_number || index + 1}</span>
+                    <span class="scene-shot-badge">${scene.shot_type || ''}</span>
+                </div>
+                <span class="scene-status-badge" id="auto-scene-status-${index}" data-status="pending">待处理</span>
+            </div>
+            
+            <p class="scene-desc" style="margin-bottom:12px;">${scene.scene_desc || ''}</p>
+            
+            <!-- 人物选择器 -->
+            <div class="auto-scene-char-select" id="auto-scene-char-${index}"></div>
+            
+            <!-- 提示词编辑区 -->
+            <div class="prompt-block" style="margin:12px 0;">
+                <label style="font-size:13px;font-weight:600;">文生图提示词（可编辑）</label>
+                <textarea class="prompt-textarea" id="auto-scene-img-prompt-${index}" rows="4">${scene.image_prompt || ''}</textarea>
+            </div>
+            
+            <div class="prompt-block" style="margin:12px 0;">
+                <label style="font-size:13px;font-weight:600;">视频提示词（可编辑）</label>
+                <textarea class="prompt-textarea" id="auto-scene-vid-prompt-${index}" rows="3">${scene.video_prompt || ''}</textarea>
+            </div>
+            
+            <!-- 结果展示 -->
+            <div class="auto-scene-result" id="auto-scene-result-${index}"></div>
+            
+            <!-- 评审结果 -->
+            <div class="auto-scene-review" id="auto-scene-review-${index}" style="display:none;"></div>
+        </div>
+    `).join('');
+    
+    // 渲染人物选择器
+    autoScenesData.forEach((_, index) => {
+        renderSceneCharSelector(index);
+    });
+    
+    document.getElementById('auto-scenes-card').style.display = 'block';
+}
+
+/**
+ * 更新单个分镜状态
+ */
+function updateSceneStatus(sceneIndex, status, imageData = null, videoData = null, reviewData = null) {
+    const card = document.getElementById(`auto-scene-card-${sceneIndex}`);
+    const statusBadge = document.getElementById(`auto-scene-status-${sceneIndex}`);
+    const resultDiv = document.getElementById(`auto-scene-result-${sceneIndex}`);
+    const reviewDiv = document.getElementById(`auto-scene-review-${sceneIndex}`);
+    
+    if (!card || !statusBadge) return;
+    
+    // 更新状态徽章
+    statusBadge.dataset.status = status;
+    statusBadge.textContent = status === 'pending' ? '待处理' : 
+                              status === 'processing' ? '处理中' :
+                              status === 'completed' ? '已完成' : '失败';
+    
+    // 更新卡片样式
+    card.classList.remove('active', 'completed', 'failed');
+    if (status === 'processing') card.classList.add('active');
+    else if (status === 'completed') card.classList.add('completed');
+    else if (status === 'failed') card.classList.add('failed');
+    
+    // 更新结果展示
+    if (resultDiv && (imageData || videoData)) {
+        let html = '';
+        if (imageData && imageData.success) {
+            html += `<div><img src="${imageData.url}" alt="分镜${sceneIndex+1}图片"></div>`;
+        }
+        if (videoData && videoData.success) {
+            html += `<div><video src="${videoData.url}" controls style="max-width:300px;"></video></div>`;
+        }
+        resultDiv.innerHTML = html;
+    }
+    
+    // 更新评审结果
+    if (reviewDiv && reviewData) {
+        reviewDiv.style.display = 'block';
+        reviewDiv.innerHTML = `
+            <div class="review-score">评分：<b>${reviewData.overall_score || 0}/10</b></div>
+            <div class="review-comment">${reviewData.comment || reviewData.overall_comment || ''}</div>
+            <div class="review-feedback-area">
+                <textarea id="auto-scene-feedback-${sceneIndex}" placeholder="输入你的意见，AI会修正提示词..."></textarea>
+                <button class="btn btn-sm btn-primary" onclick="submitSceneFeedback(${sceneIndex})">
+                    📝 提交反馈并修正
+                </button>
+            </div>
+        `;
+    }
+}
+
+/**
+ * 提交分镜评审反馈
+ */
+async function submitSceneFeedback(sceneIndex) {
+    const feedback = document.getElementById(`auto-scene-feedback-${sceneIndex}`).value.trim();
+    if (!feedback) {
+        showToast('请输入反馈意见', 'error');
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/auto-submit-feedback/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scene_index: sceneIndex, feedback })
+        });
+        const data = await resp.json();
+        
+        if (data.success) {
+            showToast('反馈已提交，AI正在修正...', 'success');
+            // 更新提示词显示
+            if (data.correction.image_prompt) {
+                document.getElementById(`auto-scene-img-prompt-${sceneIndex}`).value = data.correction.image_prompt;
+            }
+            if (data.correction.video_prompt) {
+                document.getElementById(`auto-scene-vid-prompt-${sceneIndex}`).value = data.correction.video_prompt;
+            }
+        } else {
+            showToast('提交失败: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('请求异常: ' + e.message, 'error');
+    }
+}
+
+/**
+ * 渲染最终结果
+ */
+function renderFinalResults(result) {
+    if (!result) return;
+    
+    document.getElementById('auto-result-section').style.display = 'block';
+    
+    // 渲染评审汇总
+    if (result.final_review) {
+        document.getElementById('auto-reviews-card').style.display = 'block';
+        const summaryEl = document.getElementById('auto-reviews-summary');
+        const avgScore = result.final_review.overall_score || 0;
+        
+        summaryEl.innerHTML = `
+            <div style="text-align:center;padding:20px;">
+                <div style="font-size:48px;font-weight:bold;color:var(--primary-color);">${avgScore.toFixed(1)}</div>
+                <div style="font-size:14px;color:#666;margin-top:8px;">完整视频平均得分 / 10</div>
+                <div style="margin-top:12px;font-size:13px;color:#666;">${result.final_review.comment || ''}</div>
+            </div>
+            ${result.scene_reviews ? result.scene_reviews.map((review, i) => `
+                <div style="padding:12px;border-top:1px solid var(--border-color);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>分镜${i+1}</strong>
+                        <span style="font-size:18px;font-weight:bold;color:${(review.overall_score || 0) >= 7 ? '#10b981' : '#f59e0b'};">
+                            ${review.overall_score || 0}/10
+                        </span>
+                    </div>
+                    <p style="font-size:13px;color:#666;margin-top:8px;">${review.comment || ''}</p>
+                </div>
+            `).join('') : ''}
+        `;
+    }
+}
+

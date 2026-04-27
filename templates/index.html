@@ -50,6 +50,9 @@
             <button class="tab-btn" data-tab="storyboard" onclick="switchTab('storyboard')">
                 ✂️ 分镜规划
             </button>
+            <button class="tab-btn" data-tab="auto" onclick="switchTab('auto')">
+                🚀 全自动
+            </button>
         </div>
 
         <!-- Tab 1: 创作工作台 -->
@@ -555,6 +558,12 @@
                             <label for="scene-description">场景 / 故事描述 <span class="required">*</span></label>
                             <textarea id="scene-description" rows="6" placeholder="例如：清晨时分，一个女孩提着行李走出公寓，走过青石板路，去赶一列将要离开的火车..."></textarea>
                         </div>
+                        <div class="form-group">
+                            <label>参与人物（可选）</label>
+                            <p class="hint">勾选人物后，AI 会按名字对应故事中角色，分镜提示词不再详细描述外貌</p>
+                            <div class="scene-char-select" id="scene-char-select"></div>
+                            <div class="scene-char-empty" id="scene-char-empty">暂无人物，先在创作工作室新建人物</div>
+                        </div>
                         <div class="storyboard-options">
                             <div class="form-group" style="flex:1">
                                 <label for="scene-style">画面风格</label>
@@ -650,6 +659,169 @@
                 </div>
             </div>
         </div><!-- /tab-storyboard -->
+
+        <!-- Tab 3: 全自动 -->
+        <div class="tab-panel" id="tab-auto" style="display:none;">
+            <div class="auto-layout">
+                <!-- 输入区 -->
+                <div class="card auto-input-area">
+                    <h3>🚀 全自动工作流</h3>
+                    <p class="hint">输入场景描述，AI 将自动完成：分镜生成 → 评审进化 → 图片生成 → 视频生成 → 最终评审的完整闭环</p>
+                    
+                    <div class="form-group">
+                        <label for="auto-description">场景 / 故事描述 <span class="required">*</span></label>
+                        <textarea id="auto-description" rows="5" placeholder="例如：清晨时分，一个女孩提着行李走出公寓，走过青石板路，去赶一列将要离开的火车..."></textarea>
+                    </div>
+
+                    <div class="storyboard-options">
+                        <div class="form-group" style="flex:1">
+                            <label for="auto-style">画面风格</label>
+                            <select id="auto-style">
+                                <option value="电影感写实">🎥 电影感写实</option>
+                                <option value="山水水墨画">🏡 山水水墨画</option>
+                                <option value="赛博潮科幻">🚀 赛博潮科幻</option>
+                                <option value="动漯广告">🎨 动漯广告</option>
+                                <option value="纪录片自然">🌿 纪录片自然</option>
+                                <option value="黑色电影">🔮 黑色电影</option>
+                                <option value="日系动漯">✨ 日系动漯</option>
+                                <option value="动画风格">🎬 动画风格</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:1">
+                            <label for="auto-num-scenes">分镜数量</label>
+                            <select id="auto-num-scenes">
+                                <option value="auto">AI 自动决定</option>
+                                <option value="3">3 个</option>
+                                <option value="4">4 个</option>
+                                <option value="5">5 个</option>
+                                <option value="6">6 个</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="storyboard-options">
+                        <div class="form-group" style="flex:1">
+                            <label for="auto-image-model">文生图模型</label>
+                            <select id="auto-image-model">
+                                <option value="wanx">🎨 通义万相 2.7</option>
+                                <option value="jimeng">🌟 即梦AI 4.0</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:1">
+                            <label for="auto-video-model">图生视频模型</label>
+                            <select id="auto-video-model">
+                                <option value="wanx">🎨 通义万相 2.7 (i2v)</option>
+                                <option value="r2v">🎬 通义万相 r2v</option>
+                                <option value="jimeng">🌟 即梦AI 4.0</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="storyboard-options">
+                        <div class="form-group" style="flex:1">
+                            <label for="auto-score-threshold">评分阈值（达标分数）</label>
+                            <input type="number" id="auto-score-threshold" value="7" min="1" max="10" step="1">
+                            <span class="hint">达到此分数后停止进化，进入下一步</span>
+                        </div>
+                        <div class="form-group" style="flex:1">
+                            <label for="auto-max-cycles">最大进化循环次数</label>
+                            <input type="number" id="auto-max-cycles" value="3" min="1" max="5" step="1">
+                            <span class="hint">每个阶段最多循环次数，避免无限循环</span>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="startAutoWorkflow()" id="btn-start-auto">
+                        🚀 开始全自动流程
+                    </button>
+                </div>
+
+                <!-- 控制按钮区 -->
+                <div class="auto-control-bar" id="auto-control-bar" style="display:none;">
+                    <button class="btn btn-primary" id="btn-auto-start" onclick="startAutoWorkflow()">
+                        ▶️ 开始
+                    </button>
+                    <button class="btn btn-secondary" id="btn-auto-pause" onclick="controlAutoWorkflow('pause')" style="display:none;">
+                        ⏸️ 暂停
+                    </button>
+                    <button class="btn btn-success" id="btn-auto-resume" onclick="controlAutoWorkflow('resume')" style="display:none;">
+                        ▶️ 继续
+                    </button>
+                    <button class="btn btn-danger" id="btn-auto-stop" onclick="controlAutoWorkflow('stop')" style="display:none;">
+                        ⏹️ 停止
+                    </button>
+                    
+                    <div class="auto-mode-switch">
+                        <span>模式：</span>
+                        <label class="switch">
+                            <input type="checkbox" id="auto-mode-toggle" onchange="toggleAutoMode()">
+                            <span class="slider"></span>
+                        </label>
+                        <span id="auto-mode-label">全自动</span>
+                    </div>
+                </div>
+
+                <!-- 进度追踪卡片 -->
+                <div class="card auto-progress-card" id="auto-progress-card" style="display:none;">
+                    <h3>📊 流程进度</h3>
+                    
+                    <!-- 当前阶段指示器 -->
+                    <div class="auto-progress-stage" id="auto-stage-indicator">
+                        <span class="stage-badge stage-storyboard" data-stage="storyboard">① 分镜生成</span>
+                        <span class="stage-badge stage-review" data-stage="review">② 分镜评审</span>
+                        <span class="stage-badge stage-image" data-stage="image">③ 图片生成</span>
+                        <span class="stage-badge stage-video" data-stage="video">④ 视频生成</span>
+                        <span class="stage-badge stage-final-review" data-stage="final_review">⑤ 最终评审</span>
+                        <span class="stage-badge stage-done" data-stage="done">⑥ 完成</span>
+                    </div>
+
+                    <!-- 阶段进度条 -->
+                    <div style="margin-top:16px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                            <span style="font-size:13px;font-weight:600;">当前阶段进度</span>
+                            <span id="auto-stage-action" style="font-size:12px;color:#666;">等待开始...</span>
+                        </div>
+                        <div class="auto-progress-bar-wrap">
+                            <div class="auto-progress-bar" id="auto-stage-progress-bar" style="width:0%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- 总进度条 -->
+                    <div style="margin-top:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                            <span style="font-size:13px;font-weight:600;">总进度</span>
+                            <span id="auto-total-progress-text" style="font-size:12px;color:#666;">0%</span>
+                        </div>
+                        <div class="auto-total-progress-wrap">
+                            <div class="auto-progress-bar" id="auto-total-progress-bar" style="width:0%;background:linear-gradient(90deg,#10b981,#059669);"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 日志输出卡片 -->
+                <div class="card auto-log-card" id="auto-log-card" style="display:none;">
+                    <h3>📝 执行日志</h3>
+                    <div class="auto-log-output" id="auto-log-output">
+                        <!-- 日志条目动态添加 -->
+                    </div>
+                </div>
+
+                <!-- 结果展示区 -->
+                <div class="auto-result-section" id="auto-result-section" style="display:none;">
+                    <!-- 分镜结果 -->
+                    <div class="card" id="auto-scenes-card" style="display:none;">
+                        <h3>🎬 分镜列表</h3>
+                        <p class="hint">每个分镜可单独选择人物、编辑提示词、查看评审结果</p>
+                        <div id="auto-scenes-list"></div>
+                    </div>
+
+                    <!-- 评审汇总 -->
+                    <div class="card" id="auto-reviews-card" style="display:none;">
+                        <h3>🔍 评审结果汇总</h3>
+                        <div id="auto-reviews-summary"></div>
+                    </div>
+                </div>
+            </div>
+        </div><!-- /tab-auto -->
     </div>
 
     <!-- Toast 提示 -->
