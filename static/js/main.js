@@ -9,6 +9,7 @@ let lastGeneratedImageFilename = null; // 左侧最近生成图片的文件名
 let referenceImageUrls = [null, null, null, null, null, null, null, null, null]; // 左侧文生图使用的参考图Base64 URL，最多9张
 let videoRefImageUrls = [null, null, null, null, null]; // 右侧视频r2v参考图Base64 URL，最多5张
 let pollTimer = null;
+let hideLoadingTimers = {}; // 面板遮罩延迟隐藏的计时器
 let pollStartTime = null;
 let lastVideoUrl = null;    // 最近生成的视频CDN URL（供 VLM 评审）
 let lastVideoPrompt = null; // 最近视频生成的提示词
@@ -81,6 +82,11 @@ function updateProgress(status) {
  * @param {number} progressPct - 进度百分比
  */
 function showSectionLoading(sectionId, text, progressPct = 10) {
+    // 清除该面板之前的延迟隐藏计时器，防止旧计时器覆盖新的遮罩
+    if (hideLoadingTimers[sectionId]) {
+        clearTimeout(hideLoadingTimers[sectionId]);
+        delete hideLoadingTimers[sectionId];
+    }
     const overlay = document.getElementById(`${sectionId}-loading-overlay`);
     const textEl  = document.getElementById(`${sectionId}-loading-text`);
     const barEl   = document.getElementById(`${sectionId}-loading-bar`);
@@ -105,11 +111,21 @@ function updateSectionLoading(sectionId, text, progressPct) {
  * @param {number} delay - 延迟毫秒数，默认0（立即隐藏）
  */
 function hideSectionLoading(sectionId, delay = 0) {
+    // 清除该面板之前的延迟隐藏计时器
+    if (hideLoadingTimers[sectionId]) {
+        clearTimeout(hideLoadingTimers[sectionId]);
+        delete hideLoadingTimers[sectionId];
+    }
     const fn = () => {
         const overlay = document.getElementById(`${sectionId}-loading-overlay`);
         if (overlay) overlay.style.display = 'none';
+        delete hideLoadingTimers[sectionId];
     };
-    delay > 0 ? setTimeout(fn, delay) : fn();
+    if (delay > 0) {
+        hideLoadingTimers[sectionId] = setTimeout(fn, delay);
+    } else {
+        fn();
+    }
 }
 
 /**
@@ -2103,6 +2119,9 @@ let autoWorkflowPaused = false;
 let autoScenesData = []; // 分镜数据缓存
 let autoSceneCharacters = {}; // 每个分镜的人物选择 {sceneIndex: [charId, ...]}
 let autoCharactersList = []; // 人物列表缓存
+let autoSceneVersions = {}; // 分镜版本数据缓存 {sceneIdx: {images:[], videos:[], ...}}
+let autoVideoModel = 'wanx'; // 当前视频模型
+let autoScoreThreshold = 7;   // 评分阈值
 
 /**
  * 加载人物列表（用于分镜选择）
@@ -2250,7 +2269,10 @@ async function startAutoWorkflow() {
     // 重置状态
     autoScenesData = [];
     autoSceneCharacters = {};
+    autoSceneVersions = {};
     autoLogIndex = 0;
+    autoVideoModel = videoModel;
+    autoScoreThreshold = scoreThreshold;
     
     // 禁用开始按钮，显示控制栏
     document.getElementById('btn-auto-start').disabled = true;
@@ -2335,10 +2357,26 @@ function pollAutoStatus() {
                 autoLogIndex = data.logs.length;
             }
             
-            // 保存分镜数据
-            if (data.result && data.result.scenes && data.result.scenes.length > 0 && autoScenesData.length === 0) {
-                autoScenesData = data.result.scenes;
-                renderAutoScenesList();
+            // 更新分镜数据缓存
+            if (data.scenes && data.scenes.length > 0) {
+                autoScenesData = data.scenes;
+            }
+            
+            // 处理分镜版本数据
+            if (data.scene_versions && Object.keys(data.scene_versions).length > 0) {
+                autoSceneVersions = data.scene_versions;
+                // 初始化分镜版本区域
+                document.getElementById('auto-scene-versions-section').style.display = 'block';
+                renderSceneVersions(data.scene_versions, data.scenes || autoScenesData);
+            }
+            
+            // 图片阶段完成，等待用户
+            if (data.stage === 'images_done' && data.waiting_for_user) {
+                document.getElementById('auto-images-done-bar').style.display = 'block';
+                document.getElementById('btn-auto-pause').style.display = 'none';
+                document.getElementById('btn-auto-resume').style.display = 'none';
+            } else if (data.stage !== 'images_done') {
+                document.getElementById('auto-images-done-bar').style.display = 'none';
             }
             
             // 检查完成
@@ -2346,6 +2384,7 @@ function pollAutoStatus() {
                 clearInterval(autoPollTimer);
                 renderFinalResults(data.result);
                 resetAutoControls();
+                document.getElementById('auto-images-done-bar').style.display = 'none';
                 showToast('全自动流程完成！', 'success');
             } else if (data.status === 'failed') {
                 clearInterval(autoPollTimer);
@@ -2588,6 +2627,284 @@ function renderFinalResults(result) {
                 </div>
             `).join('') : ''}
         `;
+    }
+}
+
+/**
+ * 渲染分镜版本卡片（实时更新）
+ * sceneVersions: {"0": {images:[], videos:[], char_image:..., selected_image_idx:...}, ...}
+ * scenes: [{scene_desc, image_prompt, video_prompt, ...}, ...]
+ */
+function renderSceneVersions(sceneVersions, scenes) {
+    const container = document.getElementById('auto-scene-versions-list');
+    if (!container) return;
+
+    const indices = Object.keys(sceneVersions).sort((a, b) => parseInt(a) - parseInt(b));
+    
+    indices.forEach(idxStr => {
+        const i = parseInt(idxStr);
+        const sv = sceneVersions[idxStr];
+        const scene = (scenes && scenes[i]) || {};
+        const images = sv.images || [];
+        const videos = sv.videos || [];
+        const selectedImgIdx = sv.selected_image_idx >= 0 ? sv.selected_image_idx : 0;
+        const charImage = sv.char_image || '';
+        
+        let cardEl = document.getElementById(`sv-card-${i}`);
+        if (!cardEl) {
+            cardEl = document.createElement('div');
+            cardEl.id = `sv-card-${i}`;
+            cardEl.className = 'card';
+            cardEl.style.cssText = 'margin-bottom:16px;';
+            container.appendChild(cardEl);
+        }
+        
+        const scoreColor = (score) => score >= 7 ? '#10b981' : score >= 5 ? '#f59e0b' : '#ef4444';
+        const passLabel = (passed) => passed ? '<span style="color:#10b981;font-size:11px;">✅达标</span>' : '<span style="color:#ef4444;font-size:11px;">❌未达标</span>';
+        
+        const renderReviewBlock = (review, manualReview, type, sceneIdx, vIdx) => {
+            const active = manualReview || review;
+            const score = active ? (active.overall_score || 0) : '-';
+            const comment = active ? (active.comment || '') : '';
+            const isManual = !!manualReview;
+            const improvements = active ? (active.improvements || active.suggestions || active.issues || []) : [];
+            return `
+                <div class="review-block" style="background:#f9fafb;border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                        <span style="font-weight:700;color:${scoreColor(score)};">${score}/10</span>
+                        ${isManual ? '<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;">✏️手动</span>' : '<span style="background:#eff6ff;color:#1d4ed8;padding:1px 6px;border-radius:8px;">🤖自动</span>'}
+                    </div>
+                    <div style="color:#555;">${comment}</div>
+                    ${improvements.length ? `<div style="margin-top:4px;color:#7c3aed;">改进: ${improvements.join(' / ')}</div>` : ''}
+                    <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+                        <input id="mr-score-${type}-${sceneIdx}-${vIdx}" type="number" min="1" max="10" value="${score !== '-' ? score : 7}" 
+                               style="width:52px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;" placeholder="分">
+                        <input id="mr-comment-${type}-${sceneIdx}-${vIdx}" type="text" value="${comment.replace(/"/g, '&quot;')}" 
+                               style="flex:1;min-width:100px;padding:2px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;" placeholder="手动评审意见...">
+                        <button onclick="saveManualReview('${type}',${sceneIdx},${vIdx})" 
+                                style="padding:2px 8px;background:#6366f1;color:white;border:none;border-radius:4px;font-size:11px;cursor:pointer;">保存</button>
+                    </div>
+                </div>`;
+        };
+        
+        // 图片版本列表
+        const imgVersionsHtml = images.length === 0 ? '<div style="color:#9ca3af;font-size:13px;。">待生成...</div>' :
+            `<div style="display:flex;gap:10px;flex-wrap:wrap;">
+                ${images.map((vObj, vIdx) => {
+                    const img = vObj.image;
+                    const review = vObj.image_review;
+                    const manualReview = vObj.manual_review;
+                    const passed = vObj.image_passed;
+                    const isSelected = vIdx === selectedImgIdx;
+                    return `
+                        <div id="sv-img-${i}-${vIdx}" style="border:2px solid ${isSelected ? '#6366f1' : '#e5e7eb'};border-radius:8px;padding:8px;width:160px;cursor:pointer;position:relative;"
+                             onclick="selectImageVersion(${i}, ${vIdx})">
+                            <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">v${vObj.version} ${passLabel(passed)}</div>
+                            ${img ? `<img src="${img.url}" style="width:100%;height:100px;object-fit:cover;border-radius:4px;">` : `<div style="width:100%;height:100px;background:#fee2e2;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#ef4444;">${vObj.image_error || '生成失败'}</div>`}
+                            ${isSelected ? '<div style="position:absolute;top:4px;right:4px;background:#6366f1;color:white;font-size:10px;padding:1px 5px;border-radius:8px;">✓已选</div>' : ''}
+                            ${renderReviewBlock(review, manualReview, 'image', i, vIdx)}
+                        </div>`;
+                }).join('')}
+            </div>`;
+        
+        // r2v 角色图选择区
+        const isR2V = autoVideoModel === 'r2v';
+        const charBlockHtml = isR2V ? `
+            <div style="margin-top:10px;padding:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;">
+                <div style="font-size:12px;font-weight:600;color:#92400e;margin-bottom:6px;">🎭 r2v 角色参考图（必选）</div>
+                ${charImage ? `<div style="display:flex;align-items:center;gap:8px;">
+                    <img src="${charImage}" style="width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid #fbbf24;">
+                    <span style="font-size:12px;color:#78350f;">${charImage}</span>
+                    <button onclick="clearCharImage(${i})" style="padding:1px 6px;background:#fef3c7;border:1px solid #fbbf24;border-radius:4px;font-size:11px;cursor:pointer;">清除</button>
+                </div>` : '<div style="font-size:12px;color:#b45309;">未选择，将用首帧当参考图</div>'}
+                <div style="margin-top:6px;">
+                    <select id="char-img-sel-${i}" style="font-size:12px;padding:3px;border:1px solid #d1d5db;border-radius:4px;max-width:200px;">
+                        <option value="">从人物库选择...</option>
+                        ${autoCharactersList.flatMap(c => (c.images || []).map(img => 
+                            `<option value="/images/${img.filename}">[${c.name}] ${img.filename}</option>`
+                        )).join('')}
+                    </select>
+                    <button onclick="setCharImage(${i})" style="margin-left:6px;padding:3px 8px;background:#f59e0b;color:white;border:none;border-radius:4px;font-size:11px;cursor:pointer;">确定</button>
+                </div>
+            </div>` : '';
+        
+        // 视频版本列表
+        const vidVersionsHtml = videos.length === 0 ? '<div style="color:#9ca3af;font-size:13px;">待生成...</div>' :
+            `<div style="display:flex;gap:10px;flex-wrap:wrap;">
+                ${videos.map((vObj, vIdx) => {
+                    const vid = vObj.video;
+                    const review = vObj.video_review;
+                    const manualReview = vObj.manual_review;
+                    const passed = vObj.video_passed;
+                    return `
+                        <div style="border:1.5px solid #e5e7eb;border-radius:8px;padding:8px;width:200px;">
+                            <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">v${vObj.version} ${passLabel(passed)}</div>
+                            ${vid ? `<video src="${vid.url}" controls style="width:100%;height:110px;border-radius:4px;object-fit:cover;"></video>` : `<div style="width:100%;height:110px;background:#fee2e2;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#ef4444;">${vObj.video_error || '生成失败'}</div>`}
+                            ${renderReviewBlock(review, manualReview, 'video', i, vIdx)}
+                        </div>`;
+                }).join('')}
+            </div>`;
+        
+        cardEl.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                <span style="background:#6366f1;color:white;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;">${i+1}</span>
+                <span style="font-size:14px;font-weight:600;">分镜${i+1}: ${(scene.scene_title || scene.scene_desc || '').substring(0,30)}</span>
+            </div>
+            <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:6px;">🖼️ 图片版本 (${images.length})</div>
+            ${imgVersionsHtml}
+            ${charBlockHtml}
+            ${videos.length > 0 ? `<div style="font-size:13px;font-weight:600;color:#374151;margin:10px 0 6px;">🎬 视频版本 (${videos.length})</div>${vidVersionsHtml}` : ''}
+        `;
+    });
+}
+
+/**
+ * 手动选择图片版本
+ */
+async function selectImageVersion(sceneIndex, versionIdx) {
+    if (!autoTaskId) return;
+    try {
+        const resp = await fetch(`/api/auto-select-image/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scene_index: sceneIndex, version_idx: versionIdx })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            // 更新本地缓存和 UI
+            if (autoSceneVersions[String(sceneIndex)]) {
+                autoSceneVersions[String(sceneIndex)].selected_image_idx = versionIdx;
+                renderSceneVersions(autoSceneVersions, autoScenesData);
+            }
+            showToast(`已选择分镜${sceneIndex+1}图片版本${versionIdx+1}`, 'success');
+        } else {
+            showToast('选择失败: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('请求异常', 'error');
+    }
+}
+
+/**
+ * 手动评审小组保存
+ */
+async function saveManualReview(type, sceneIndex, versionIdx) {
+    if (!autoTaskId) return;
+    const scoreEl = document.getElementById(`mr-score-${type}-${sceneIndex}-${versionIdx}`);
+    const commentEl = document.getElementById(`mr-comment-${type}-${sceneIndex}-${versionIdx}`);
+    if (!scoreEl || !commentEl) return;
+    const score = parseInt(scoreEl.value) || 7;
+    const comment = commentEl.value.trim();
+    try {
+        const resp = await fetch(`/api/auto-manual-review/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scene_index: sceneIndex,
+                version_idx: versionIdx,
+                type,
+                score,
+                comment,
+                score_threshold: autoScoreThreshold
+            })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast('评审已保存', 'success');
+            // 更新本地缓存
+            const key = type === 'image' ? 'images' : 'videos';
+            const sv = autoSceneVersions[String(sceneIndex)];
+            if (sv && sv[key] && sv[key][versionIdx]) {
+                sv[key][versionIdx].manual_review = { overall_score: score, comment, manual: true };
+                sv[key][versionIdx][type === 'image' ? 'image_passed' : 'video_passed'] = (score >= autoScoreThreshold);
+                if (type === 'image') sv.selected_image_idx = data.best_idx !== undefined ? data.best_idx : sv.selected_image_idx;
+                renderSceneVersions(autoSceneVersions, autoScenesData);
+            }
+        } else {
+            showToast('保存失败: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('请求异常', 'error');
+    }
+}
+
+/**
+ * 设置r2v角色参考图
+ */
+async function setCharImage(sceneIndex) {
+    if (!autoTaskId) return;
+    const sel = document.getElementById(`char-img-sel-${sceneIndex}`);
+    const charImageUrl = sel ? sel.value : '';
+    try {
+        const resp = await fetch(`/api/auto-set-char-image/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scene_index: sceneIndex, char_image_url: charImageUrl })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(`分镜${sceneIndex+1}角色图已设置`, 'success');
+            if (autoSceneVersions[String(sceneIndex)]) {
+                autoSceneVersions[String(sceneIndex)].char_image = charImageUrl || null;
+                renderSceneVersions(autoSceneVersions, autoScenesData);
+            }
+        } else {
+            showToast('设置失败: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('请求异常', 'error');
+    }
+}
+
+/**
+ * 清除r2v角色参考图
+ */
+async function clearCharImage(sceneIndex) {
+    if (!autoTaskId) return;
+    try {
+        await fetch(`/api/auto-set-char-image/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scene_index: sceneIndex, char_image_url: '' })
+        });
+        if (autoSceneVersions[String(sceneIndex)]) {
+            autoSceneVersions[String(sceneIndex)].char_image = null;
+            renderSceneVersions(autoSceneVersions, autoScenesData);
+        }
+        showToast('角色图已清除', 'info');
+    } catch (e) {
+        showToast('请求异常', 'error');
+    }
+}
+
+/**
+ * 开始视频生成阶段
+ */
+async function startVideos() {
+    if (!autoTaskId) return;
+    const btn = document.getElementById('btn-start-videos');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '正在启动...';
+    }
+    try {
+        const resp = await fetch(`/api/auto-start-videos/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        if (data.success) {
+            document.getElementById('auto-images-done-bar').style.display = 'none';
+            document.getElementById('btn-auto-pause').style.display = 'inline-block';
+            document.getElementById('btn-auto-stop').style.display = 'inline-block';
+            showToast('视频生成已启动！', 'success');
+        } else {
+            showToast('启动失败: ' + data.error, 'error');
+            if (btn) { btn.disabled = false; btn.textContent = '🎬 开始生成视频'; }
+        }
+    } catch (e) {
+        showToast('请求异常', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '🎬 开始生成视频'; }
     }
 }
 

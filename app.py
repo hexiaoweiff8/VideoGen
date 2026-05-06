@@ -786,13 +786,18 @@ def query_task_status(task_id):
 
 
 def download_video(video_url, task_id):
-    """下载视频到本地"""
+    """下载视频到本地（若文件已存在则跳过下载）"""
     try:
-        response = requests.get(video_url, timeout=120)
-        response.raise_for_status()
-        
         filename = f"video_{task_id}.mp4"
         local_path = os.path.join(VIDEO_SAVE_DIR, filename)
+        
+        # 检查文件是否已存在，避免重复下载
+        if os.path.exists(local_path):
+            print(f"[下载视频] 文件已存在，跳过下载: {filename}")
+            return local_path, filename
+        
+        response = requests.get(video_url, timeout=120)
+        response.raise_for_status()
         
         with open(local_path, 'wb') as f:
             f.write(response.content)
@@ -2097,72 +2102,84 @@ def _extract_api_content(result):
     return None
 
 
-def _generate_image_backend(prompt, image_model, api_key, negative_prompt="", size="2K"):
-    """后台生成图片（同步等待完成）"""
+def _generate_image_backend(prompt, image_model, api_key, negative_prompt="", size="2K", reference_images=None):
+    """后台生成图片（同步等待完成），支持本地参考图路径（自动压缩转base64）"""
     try:
-        if image_model == 'jimeng':
-            # 即梦文生图
-            from config import VOLC_ACCESS_KEY, VOLC_SECRET_KEY
-            visual_service = VisualService()
-            visual_service.set_ak(VOLC_ACCESS_KEY)
-            visual_service.set_sk(VOLC_SECRET_KEY)
-            
-            req = {
-                "req_key": "jimeng_t2i_v40",
-                "prompt": prompt,
-                "model_version": "general",
-                "width": 1024,
-                "height": 1024,
-                "req_json": json.dumps({
-                    "seed": -1,
-                    "scale": 3.5
-                })
-            }
-            
-            resp = visual_service.cv_process(req)
-            if resp.get('code') == 10000 and resp.get('data'):
-                image_url = resp['data']['binary_data_base64'][0]
-                # 保存到本地
-                filename = f"image_{uuid.uuid4().hex[:8]}.png"
-                filepath = os.path.join(IMAGE_SAVE_DIR, filename)
-                image_data = base64.b64decode(image_url)
-                with open(filepath, 'wb') as f:
-                    f.write(image_data)
-                return {'success': True, 'filename': filename, 'url': f'/images/{filename}'}
-            else:
-                return {'success': False, 'error': resp.get('message', '即梦生成失败')}
+        # 处理参考图：本地路径 → PIL压缩(最大1024px) → base64 data URL
+        ref_images_for_api = []
+        if reference_images:
+            from PIL import Image
+            import io as _io
+            for ref_path in reference_images:
+                if not isinstance(ref_path, str):
+                    continue
+                if ref_path.startswith(('http://', 'https://')):
+                    ref_images_for_api.append(ref_path)
+                elif os.path.exists(ref_path):
+                    try:
+                        img = Image.open(ref_path).convert('RGB')
+                        if img.width > 1024 or img.height > 1024:
+                            img.thumbnail((1024, 1024), Image.LANCZOS)
+                        buf = _io.BytesIO()
+                        img.save(buf, format='JPEG', quality=85)
+                        b64 = base64.b64encode(buf.getvalue()).decode()
+                        ref_images_for_api.append(f"data:image/jpeg;base64,{b64}")
+                        print(f"[文生图-参考图] 已压缩转base64: {os.path.basename(ref_path)} → {len(b64)//1024}KB")
+                    except Exception as e:
+                        print(f"[文生图-参考图] 转换失败: {ref_path}: {e}")
+        # 通义万相文生图（wan2.7-image-pro）
+        result = generate_image_wanx(prompt, negative_prompt, size,
+                                     ref_images_for_api if ref_images_for_api else None,
+                                     api_key)
+        if result.get('success'):
+            return {'success': True, 'filename': result.get('filename'), 'url': f'/images/{result.get("filename")}'}
         else:
-            # 通义万相文生图
-            result = generate_image_wanx(prompt, negative_prompt, size, api_key)
-            if result.get('success'):
-                return {'success': True, 'filename': result.get('filename'), 'url': f'/images/{result.get("filename")}'}
-            else:
-                return {'success': False, 'error': result.get('error', '万相生成失败')}
+            return {'success': False, 'error': result.get('error', '万相生成失败')}
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
 
-def _generate_video_backend(prompt, image_url, video_model, api_key, resolution="720P", duration=5):
-    """后台生成视频（同步等待完成）"""
+def _generate_video_backend(prompt, image_url, video_model, api_key, resolution="720P", duration=5, char_image_url=None):
+    """后台生成视频（同步等待完成）
+    char_image_url: r2v模式下的角色参考图（/images/xxx 或本地路径）。
+    r2v要求: reference_images + first_frame_url 必须同时提供，否则报错 Only first frame provided
+    """
     try:
-        # 将本地路径转为绝对路径，然后上传获取公网URL
         local_image_path = None
         if image_url.startswith('/images/'):
             filename = image_url.replace('/images/', '')
             local_image_path = os.path.join(IMAGE_SAVE_DIR, filename)
         
         if video_model == 'r2v':
-            # r2v 模式
-            oss_url = image_url
-            if local_image_path and os.path.exists(local_image_path):
-                oss_url = upload_file_and_get_temp_url(local_image_path, model_name="wan2.7-r2v")
-            elif image_url.startswith('/'):
-                oss_url = f"http://localhost:5000{image_url}"
+            # r2v 模式：必须同时提供 reference_images + first_frame_url
+            if not local_image_path or not os.path.exists(local_image_path):
+                return {'success': False, 'error': f'r2v图片文件不存在: {local_image_path}'}
+            
+            # 首帧图上传 OSS
+            first_frame_oss = upload_file_and_get_temp_url(local_image_path, model_name="wan2.7-r2v")
+            
+            # 角色参考图列表（必须有）
+            ref_images = []
+            if char_image_url:
+                char_local = None
+                if char_image_url.startswith('/images/'):
+                    char_local = os.path.join(IMAGE_SAVE_DIR, char_image_url.replace('/images/', ''))
+                elif os.path.exists(char_image_url):
+                    char_local = char_image_url
+                if char_local and os.path.exists(char_local):
+                    char_oss = upload_file_and_get_temp_url(char_local, model_name="wan2.7-r2v")
+                    ref_images.append(char_oss)
+                    print(f"[r2v] 角色参考图已上传OSS: {char_image_url}")
+            
+            # 必须有参考图，否则用首帧图本身做参考
+            if not ref_images:
+                ref_images = [first_frame_oss]
+                print(f"[r2v] 未选角色图，用首帧图作参考图")
             
             result = create_video_task_r2v(
                 prompt=prompt,
-                reference_images=[],
-                first_frame_url=oss_url,
+                reference_images=ref_images,
+                first_frame_url=first_frame_oss,
                 resolution=resolution,
                 duration=min(duration, 10),
                 api_key=api_key
@@ -2178,13 +2195,9 @@ def _generate_video_backend(prompt, image_url, video_model, api_key, resolution=
                 "req_key": "jimeng_i2v_v30_pro",
                 "prompt": prompt,
                 "model_version": "",
-                "req_json": json.dumps({
-                    "seed": -1,
-                    "scale": 1.5
-                })
+                "req_json": json.dumps({"seed": -1, "scale": 1.5})
             }
             
-            # 需要上传到 MinIO 获取公网 URL
             https_url = image_url
             if local_image_path and os.path.exists(local_image_path) and all([MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET]):
                 try:
@@ -2197,15 +2210,13 @@ def _generate_video_backend(prompt, image_url, video_model, api_key, resolution=
                     object_name = f"jimeng_video_src/auto_{uuid.uuid4().hex[:8]}.png"
                     with open(local_image_path, 'rb') as fh:
                         data = fh.read()
-                    client.put_object(MINIO_BUCKET, object_name, _io.BytesIO(data), len(data),
-                                     content_type='image/png')
+                    client.put_object(MINIO_BUCKET, object_name, _io.BytesIO(data), len(data), content_type='image/png')
                     https_url = f"{MINIO_ENDPOINT}/{MINIO_BUCKET}/{object_name}"
                 except Exception as me:
                     print(f"[即梦视频] MinIO上传失败: {me}")
             
             if https_url.startswith('/'):
                 https_url = f"http://localhost:5000{https_url}"
-            
             req["image_url"] = https_url
             
             resp = visual_service.cv_process(req)
@@ -2239,13 +2250,13 @@ def _generate_video_backend(prompt, image_url, video_model, api_key, resolution=
             return {'success': False, 'error': result.get('error', '视频创建失败')}
         
         # 轮询任务状态
-        task_id = result.get('task_id')
-        max_wait = 600  # 10分钟
+        vid_task_id = result.get('task_id')
+        max_wait = 600
         waited = 0
         while waited < max_wait:
             time.sleep(5)
             waited += 5
-            status_result = query_task_status(task_id)
+            status_result = query_task_status(vid_task_id)
             if status_result.get('status') == 'SUCCEEDED':
                 filename = status_result.get('filename')
                 if filename:
@@ -2560,20 +2571,42 @@ def _review_image_backend(image_url, scene_desc, api_key):
 
 如果评分低于7分，必须在 issues 和 suggestions 中详细说明。"""
         
+        # 将本地图片转为 base64（VLM 需要可访问的URL，或base64内嵌）
+        vlm_image_url = image_url
+        if image_url.startswith('/images/') or 'localhost' in image_url:
+            filename = image_url.rsplit('/', 1)[-1]
+            local_path = os.path.join(IMAGE_SAVE_DIR, filename)
+            if os.path.exists(local_path):
+                try:
+                    from PIL import Image
+                    import io as _io
+                    img = Image.open(local_path).convert('RGB')
+                    if img.width > 1024 or img.height > 1024:
+                        img.thumbnail((1024, 1024), Image.LANCZOS)
+                    buf = _io.BytesIO()
+                    img.save(buf, format='JPEG', quality=85)
+                    b64 = base64.b64encode(buf.getvalue()).decode()
+                    vlm_image_url = f"data:image/jpeg;base64,{b64}"
+                    print(f"[图片评审] 已转换为base64: {filename} ({len(b64)//1024}KB)")
+                except Exception as ce:
+                    print(f"[图片评审] base64转换失败: {ce}")
+        
         payload = {
             "model": "qwen-vl-max",
             "messages": [
                 {
                     "role": "user",
                     "content": [
-                        {"image": image_url},
-                        {"text": user_prompt}
+                        {"type": "image_url", "image_url": {"url": vlm_image_url}},
+                        {"type": "text", "text": user_prompt}
                     ]
                 }
             ]
         }
         
         resp = requests.post(QWEN_API_URL, json=payload, headers=headers, timeout=120)
+        if not resp.ok:
+            print(f"[图片评审] API错误 {resp.status_code}: {resp.text[:300]}")
         result = resp.json()
         
         content = _extract_api_content(result)
@@ -2581,15 +2614,72 @@ def _review_image_backend(image_url, scene_desc, api_key):
             import re
             json_match = re.search(r'\{[\s\S]*\}', content)
             if json_match:
-                return json.loads(json_match.group())
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError as je:
+                    print(f"[图片评审] JSON解析失败: {je}")
+                    print(f"[图片评审] 原始返回: {content[:500]}")
+            else:
+                print(f"[图片评审] 未匹配JSON，原始返回: {content[:500]}")
+        else:
+            print(f"[图片评审] 提取内容为None，响应: {json.dumps(result, ensure_ascii=False)[:300]}")
         
-        return {'overall_score': 5, 'comment': '评审解析失败'}
+        return {'overall_score': 5, 'comment': '评审解析失败', 'issues': [], 'suggestions': []}
     except Exception as e:
-        return {'overall_score': 5, 'comment': f'评审异常: {str(e)}'}
+        print(f"[图片评审] 异常: {e}")
+        return {'overall_score': 5, 'comment': f'评审异常: {str(e)}', 'issues': [], 'suggestions': []}
+
+
+def _refine_prompt_by_review(original_prompt, review_result, prompt_type, api_key):
+    """根据评审结果调用LLM修正提示词（自优化闭环）"""
+    try:
+        issues = review_result.get('issues', [])
+        suggestions = review_result.get('suggestions', [])
+        score = review_result.get('overall_score', 0)
+        comment = review_result.get('comment', '')
+        
+        if not issues and not suggestions and not comment:
+            return original_prompt
+        
+        type_label = "文生图" if prompt_type == 'image' else "视频"
+        system_prompt = (f"你是{type_label}提示词优化专家。"
+                         f"根据AI评审反馈，修正提示词以解决具体问题。"
+                         f"保持原有的风格和内容主体，只修正存在问题的部分。"
+                         f"直接输出优化后的完整提示词，不要有任何解释或前言。")
+        user_msg = (f"原始提示词：\n{original_prompt}\n\n"
+                    f"评审得分：{score}/10\n评审意见：{comment}\n"
+                    f"问题列表：{', '.join(issues) if issues else '无'}\n"
+                    f"改进建议：{', '.join(suggestions) if suggestions else '无'}\n\n"
+                    f"请根据以上反馈优化提示词：")
+        
+        refine_payload = {
+            "model": "qwen-plus",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+        headers = {"Content-Type": "application/json",
+                   "Authorization": f"Bearer {api_key or QWEN_API_KEY}"}
+        resp = requests.post(QWEN_API_URL, json=refine_payload, headers=headers, timeout=60)
+        resp.raise_for_status()
+        refined = resp.json()["choices"][0]["message"]["content"].strip()
+        return refined if refined else original_prompt
+    except Exception as e:
+        print(f"[提示词修正] 失败: {e}")
+        return original_prompt
 
 
 def run_auto_workflow(task_id, params):
-    """后台线程执行全自动工作流（重构版：分镜级评审）"""
+    """后台线程执行全自动工作流（版本追踪版）
+    两阶段流程：
+      阶段1-2: 分镜生成 + 分镜评审
+      阶段3: 逐镜图片生成（多版本+自优化）
+      等待用户确认: images_done 状态，用户可查看/选版/设角色图
+      阶段4: 逐镜视频生成（多版本+自优化）
+    """
     global CURRENT_SCENE_PROMPT
     print(f"[工作流 {task_id}] 线程开始执行")
     try:
@@ -2598,83 +2688,62 @@ def run_auto_workflow(task_id, params):
         num_scenes = params.get('num_scenes', 'auto')
         image_model = params.get('image_model', 'wanx')
         video_model = params.get('video_model', 'wanx')
-        score_threshold = params.get('score_threshold', 7)
-        max_cycles = params.get('max_cycles', 3)
+        score_threshold = int(params.get('score_threshold', 7))
+        max_versions = int(params.get('max_cycles', 3))
         api_key = params.get('api_key', '')
-        mode = params.get('mode', 'auto')  # 'auto' or 'step'
         
-        print(f"[工作流 {task_id}] 参数解析完成")
-        _update_task_status(task_id, status='running', stage='storyboard', total_progress=0, mode=mode)
-        _add_task_log(task_id, f'开始全自动工作流 (模式: {"全自动" if mode == "auto" else "单步"})')
+        _update_task_status(task_id, status='running', stage='storyboard',
+                            total_progress=0, current_action='分镜生成中...')
+        _add_task_log(task_id, '开始全自动工作流')
         
-        # === 阶段1: 分镜生成 ===
-        print(f"[工作流 {task_id}] 开始分镜生成...")
-        _update_task_status(task_id, stage='storyboard', stage_progress=0, current_action='正在生成分镜...')
+        # ====== 阶段1: 分镜生成 ======
         _add_task_log(task_id, '阶段1: 分镜生成')
-        
         scenes_result = split_scenes_with_qwen(description, style, num_scenes, api_key)
-        print(f"[工作流 {task_id}] 分镜生成完成，结果: {type(scenes_result)}")
+        if not isinstance(scenes_result, dict) or 'scenes' not in scenes_result:
+            raise Exception(f"分镜生成失败: {scenes_result}")
         
-        # 健壮地检查结果
-        if not isinstance(scenes_result, dict):
-            raise Exception(f"分镜生成失败: 返回类型错误 {type(scenes_result)}")
-        
-        if 'error' in scenes_result:
-            raise Exception(f"分镜生成失败: {scenes_result.get('error')}")
-        
-        if 'scenes' not in scenes_result:
-            raise Exception(f"分镜生成失败: 返回缺少 scenes 字段")
-        
-        scenes = scenes_result.get('scenes', []) if isinstance(scenes_result, dict) else scenes_result
-        
-        # 保存分镜到任务状态
+        scenes = scenes_result.get('scenes', [])
         _update_task_status(task_id, scenes=scenes, scene_characters={}, global_feedback=[])
         _add_task_log(task_id, f'分镜生成完成，共 {len(scenes)} 个', 'success')
         _update_task_status(task_id, stage_progress=100, total_progress=10)
         
-        # === 阶段2: 分镜评审 + 进化循环 ===
-        _add_task_log(task_id, '阶段2: 分镜评审与进化')
-        scenes_cycle = 0
-        
-        while scenes_cycle < max_cycles:
-            # 检查暂停
-            if check_pause_requested(task_id):
-                wait_for_user_confirmation(task_id, 'storyboard_review')
-            
-            scenes_cycle += 1
-            _update_task_status(task_id, stage='review', stage_progress=0, current_action=f'分镜评审 (第{scenes_cycle}轮)...')
-            _add_task_log(task_id, f'分镜评审第 {scenes_cycle} 轮')
+        # ====== 阶段2: 分镜评审 ======
+        _add_task_log(task_id, '阶段2: 分镜评审')
+        for review_cycle in range(max_versions):
+            _update_task_status(task_id, stage='review', stage_progress=0,
+                                current_action=f'分镜评审 (第{review_cycle+1}轮)...')
+            _add_task_log(task_id, f'分镜评审第 {review_cycle+1} 轮')
             
             review_result = _review_all_scenes_backend(scenes, api_key)
             overall_score = review_result.get('overall_score', 0)
             _add_task_log(task_id, f'分镜评审得分: {overall_score}/10')
             
-            _update_task_status(task_id, stage_progress=50)
-            
             if overall_score >= score_threshold:
-                _add_task_log(task_id, f'分镜评分达标 ({overall_score} >= {score_threshold})，进入逐镜生成', 'success')
+                _add_task_log(task_id, f'分镜评分达标 ({overall_score} >= {score_threshold})', 'success')
                 break
             
-            if scenes_cycle < max_cycles:
-                _add_task_log(task_id, f'分镜评分未达标，进化分镜提示词并重新生成...', 'warn')
-                # 内联进化逻辑
+            if review_cycle < max_versions - 1:
+                _add_task_log(task_id, '分镜评分未达标，进化分镜提示词并重新生成...', 'warn')
                 try:
-                    _api_key = api_key or QWEN_API_KEY
                     current_prompt = CURRENT_SCENE_PROMPT or SCENE_SYSTEM_PROMPT
                     evolve_payload = {
                         "model": "qwen-max",
                         "messages": [
                             {"role": "system", "content": SCENE_EVOLVE_SYSTEM_PROMPT},
-                            {"role": "user", "content": f"当前系统提示词：\n{current_prompt}\n\n反馈：分镜评分{overall_score}/10，未达到{score_threshold}分。请优化分镜生成标准。\n\n请输出优化后的完整系统提示词。"}
+                            {"role": "user", "content": (
+                                f"当前系统提示词：\n{current_prompt}\n\n"
+                                f"反馈：分镜评分{overall_score}/10，未达{score_threshold}分。"
+                                f"请优化分镜生成标准。（请输出完整系统提示词）"
+                            )}
                         ],
-                        "temperature": 0.5,
-                        "max_tokens": 8192
+                        "temperature": 0.5, "max_tokens": 8192
                     }
-                    evolve_headers = {"Content-Type": "application/json", "Authorization": f"Bearer {_api_key}"}
-                    evolve_resp = requests.post(QWEN_API_URL, json=evolve_payload, headers=evolve_headers, timeout=120)
+                    evolve_headers = {"Content-Type": "application/json",
+                                      "Authorization": f"Bearer {api_key or QWEN_API_KEY}"}
+                    evolve_resp = requests.post(QWEN_API_URL, json=evolve_payload,
+                                               headers=evolve_headers, timeout=120)
                     evolve_resp.raise_for_status()
                     new_prompt = evolve_resp.json()["choices"][0]["message"]["content"].strip()
-                    # 确保提示词包含 json 关键字（response_format: json_object 要求）
                     if 'json' not in new_prompt.lower():
                         new_prompt += "\n\n请始终以合法的JSON格式输出。"
                     CURRENT_SCENE_PROMPT = new_prompt
@@ -2682,201 +2751,261 @@ def run_auto_workflow(task_id, params):
                 except Exception as evolve_err:
                     _add_task_log(task_id, f'分镜进化失败: {str(evolve_err)}', 'warn')
                 
-                _update_task_status(task_id, current_action='重新生成分镜...')
                 scenes_result = split_scenes_with_qwen(description, style, num_scenes, api_key)
-                scenes = scenes_result if isinstance(scenes_result, list) else scenes_result.get('scenes', [])
+                scenes = (scenes_result.get('scenes', []) if isinstance(scenes_result, dict) else scenes_result)
                 _update_task_status(task_id, scenes=scenes)
                 _add_task_log(task_id, f'重新生成分镜完成，共 {len(scenes)} 个')
-            
-            _update_task_status(task_id, stage_progress=100)
         
         _update_task_status(task_id, total_progress=15)
         
-        # === 自动为每个分镜选择人物 ===
-        _add_task_log(task_id, '自动为每个分镜选择人物...')
+        # ====== 自动为分镜选择人物 ======
+        _add_task_log(task_id, '自动为分镜匹配人物...')
         auto_scene_chars = _auto_select_characters_for_scenes(scenes, api_key)
-        if auto_scene_chars:
-            char_names = {}
-            characters = load_characters()
-            for c in characters:
-                char_names[c['id']] = c.get('name', '')
-            for scene_idx, char_ids in auto_scene_chars.items():
-                names = [char_names.get(cid, cid) for cid in char_ids]
-                _add_task_log(task_id, f'  分镜{str(int(scene_idx)+1)}: {", ".join(names) if names else "无"}')
         _update_task_status(task_id, scene_characters=auto_scene_chars)
+        characters = load_characters()
+        char_name_map = {c['id']: c.get('name', '') for c in characters}
+        for sidx, cids in auto_scene_chars.items():
+            names = [char_name_map.get(cid, cid) for cid in cids]
+            _add_task_log(task_id, f'  分镜{int(sidx)+1}: {(", ".join(names)) if names else "无"}')
         
-        # === 阶段3: 逐镜生成（核心改动：每个分镜单独评审）===
-        _add_task_log(task_id, '阶段3: 逐镜生成与评审')
-        image_results = []
-        video_results = []
-        scene_reviews = []
+        # ====== 初始化版本追踪结构 ======
+        scene_versions = {}
+        for i in range(len(scenes)):
+            scene_versions[str(i)] = {
+                'images': [],
+                'videos': [],
+                'char_image': None,         # r2v 模式的角色参考图
+                'selected_image_idx': -1    # 默认-1，自动选最高分
+            }
+        _update_task_status(task_id, scene_versions=scene_versions)
+        
+        # ====== 阶段3: 逐镜图片生成与评审 ======
+        _add_task_log(task_id, '阶段3: 逐镜图片生成与评审')
+        _update_task_status(task_id, stage='image', total_progress=20)
         
         for i, scene in enumerate(scenes):
-            _add_task_log(task_id, f'\n========== 处理分镜 {i+1}/{len(scenes)} ==========')
-            
-            # 更新当前分镜索引
+            _add_task_log(task_id, f'\n========== 分镜 {i+1}/{len(scenes)} 图片生成 ==========')
             _update_task_status(task_id, current_scene_index=i)
             
-            # 检查暂停
-            if check_pause_requested(task_id):
-                wait_for_user_confirmation(task_id, 'before_scene', {'scene_index': i})
-            
-            # 获取该分镜的人物选择
+            # 获取该分镜的人物参考图本地路径
             with auto_tasks_lock:
-                task = auto_tasks.get(task_id, {})
-                scene_chars = task.get('scene_characters', {}).get(str(i), [])
+                task_data = auto_tasks.get(task_id, {})
+                scene_chars = task_data.get('scene_characters', {}).get(str(i), [])
             
-            scene_chars_info = []
+            ref_image_paths = []
             for char_id in scene_chars:
-                # 从人物库获取人物信息
-                characters = load_characters()
                 char_obj = next((c for c in characters if c['id'] == char_id), None)
                 if char_obj:
-                    scene_chars_info.append({'id': char_id, 'name': char_obj['name']})
+                    for img_info in char_obj.get('images', []):
+                        fname = img_info.get('filename', '')
+                        if fname:
+                            lp = os.path.join(IMAGE_SAVE_DIR, fname)
+                            if os.path.exists(lp):
+                                ref_image_paths.append(lp)
             
-            _add_task_log(task_id, f'分镜{i+1} 选中人物: {", ".join([c["name"] for c in scene_chars_info]) if scene_chars_info else "无"}')
+            if ref_image_paths:
+                _add_task_log(task_id, f'分镜{i+1} 人物参考图: {len(ref_image_paths)} 张')
             
-            # 生成图片
-            _update_task_status(task_id, stage='image', stage_progress=0,
-                current_action=f'正在生成第{i+1}个分镜的图片...')
-            _add_task_log(task_id, f'分镜{i+1}: 生成图片')
+            image_prompt = scene.get('image_prompt', '')
             
-            img_result = _generate_image_backend(
-                scene.get('image_prompt', ''), image_model, api_key
-            )
+            for v in range(max_versions):
+                version_num = v + 1
+                _add_task_log(task_id, f'--- 分镜{i+1} 图片版本 {version_num}/{max_versions} ---')
+                _update_task_status(task_id,
+                    stage_progress=int(100*(i*max_versions+v)/(len(scenes)*max_versions)),
+                    current_action=f'分镜{i+1} 图片生成 (版本{version_num})')
+                
+                _add_task_log(task_id, f'分镜{i+1}: 生成图片')
+                img_result = _generate_image_backend(
+                    image_prompt, image_model, api_key,
+                    reference_images=ref_image_paths
+                )
+                
+                version_obj = {
+                    'version': version_num,
+                    'image': img_result if img_result.get('success') else None,
+                    'image_error': img_result.get('error') if not img_result.get('success') else None,
+                    'image_review': None,
+                    'manual_review': None,
+                    'image_passed': False,
+                    'image_prompt_used': image_prompt,
+                }
+                
+                if not img_result.get('success'):
+                    _add_task_log(task_id, f'分镜{i+1} 图片生成失败: {img_result.get("error")}', 'error')
+                    scene_versions[str(i)]['images'].append(version_obj)
+                    _update_task_status(task_id, scene_versions=scene_versions)
+                    if v < max_versions - 1:
+                        continue
+                    break
+                
+                _add_task_log(task_id, f'分镜{i+1} 图片生成完成 (版本{version_num})', 'success')
+                
+                # 图片评审
+                _add_task_log(task_id, f'分镜{i+1}: 图片评审')
+                img_review = _review_image_backend(
+                    img_result.get('url', ''),
+                    scene.get('scene_desc', ''),
+                    api_key
+                )
+                img_score = img_review.get('overall_score', 0)
+                _add_task_log(task_id, f'分镜{i+1} 图片评审得分: {img_score}/10')
+                
+                version_obj['image_review'] = img_review
+                version_obj['image_passed'] = (img_score >= score_threshold)
+                scene_versions[str(i)]['images'].append(version_obj)
+                
+                # 自动选择最高分版本
+                best_score = max(
+                    (vv.get('image_review', {}).get('overall_score', 0)
+                     if vv.get('image_review') else 0)
+                    for vv in scene_versions[str(i)]['images']
+                )
+                best_idx = next(
+                    j for j, vv in enumerate(scene_versions[str(i)]['images'])
+                    if (vv.get('image_review', {}).get('overall_score', 0)
+                        if vv.get('image_review') else 0) == best_score
+                )
+                scene_versions[str(i)]['selected_image_idx'] = best_idx
+                _update_task_status(task_id, scene_versions=scene_versions)
+                
+                if img_score >= score_threshold:
+                    _add_task_log(task_id, f'分镜{i+1} 图片达标 ({img_score}/{score_threshold})', 'success')
+                    break
+                
+                if v == max_versions - 1:
+                    _add_task_log(task_id, f'分镜{i+1} 图片达到最大版本数，将使用最佳版本', 'warn')
+                    break
+                
+                # 根据评审自动修正提示词
+                _add_task_log(task_id, f'分镜{i+1} 图片未达标，根据评审修正提示词...', 'warn')
+                image_prompt = _refine_prompt_by_review(image_prompt, img_review, 'image', api_key)
+                _add_task_log(task_id, f'分镜{i+1} 图片提示词已修正')
+        
+        # 图片阶段完成，等待用户确认
+        _update_task_status(task_id,
+            stage='images_done',
+            total_progress=55,
+            current_action='图片生成完成！请查看并选择版本，然后点击“开始生成视频”',
+            scene_versions=scene_versions
+        )
+        _add_task_log(task_id,
+            '所有分镜图片生成完成！请查看各版本，'
+            '如需可手动修正评分/选择版本/设置角色图，'
+            '然后点击“开始生成视频”。', 'success')
+        
+        # 等待用户点击“开始生成视频”（调用 /api/auto-control resume 或 /api/auto-start-videos）
+        if not wait_for_user_confirmation(task_id, 'images_done', {}):
+            return  # 用户停止了任务
+        
+        # ====== 阶段4: 逐镜视频生成与评审 ======
+        _add_task_log(task_id, '阶段4: 逐镜视频生成与评审')
+        _update_task_status(task_id, stage='video', total_progress=60)
+        
+        for i, scene in enumerate(scenes):
+            _add_task_log(task_id, f'\n========== 分镜 {i+1}/{len(scenes)} 视频生成 ==========')
+            _update_task_status(task_id, current_scene_index=i)
             
-            if img_result.get('success'):
-                image_results.append(img_result)
-                _add_task_log(task_id, f'分镜{i+1} 图片生成完成', 'success')
-            else:
-                _add_task_log(task_id, f'分镜{i+1} 图片生成失败: {img_result.get("error")}', 'error')
-                image_results.append(img_result)
-                video_results.append({'success': False, 'error': '图片生成失败'})
-                scene_reviews.append({'overall_score': 0, 'comment': '跳过'})
+            # 获取用户选择的图片版本和角色图
+            with auto_tasks_lock:
+                task_data = auto_tasks.get(task_id, {})
+                sv = task_data.get('scene_versions', {}).get(str(i), {})
+                selected_idx = sv.get('selected_image_idx', 0)
+                img_versions = sv.get('images', [])
+                char_image = sv.get('char_image')  # r2v 角色图
+            
+            if not img_versions:
+                _add_task_log(task_id, f'分镜{i+1} 无图片版本，跳过视频生成', 'warn')
                 continue
             
-            # === 图片评审（新增）===
-            _update_task_status(task_id, stage='image_review', stage_progress=0,
-                current_action=f'正在评审第{i+1}个分镜的图片...')
-            _add_task_log(task_id, f'分镜{i+1}: 图片评审')
+            if selected_idx < 0 or selected_idx >= len(img_versions):
+                selected_idx = 0
             
-            img_review = _review_image_backend(
-                f"http://localhost:5000{img_result.get('url')}",
-                scene.get('scene_desc', ''),
-                api_key
-            )
-            
-            img_score = img_review.get('overall_score', 0)
-            _add_task_log(task_id, f'分镜{i+1} 图片评审得分: {img_score}/10')
-            
-            # 如果图片评分低于阈值，记录问题并可能需要调整
-            if img_score < 7:
-                issues = img_review.get('issues', [])
-                suggestions = img_review.get('suggestions', [])
-                if issues:
-                    _add_task_log(task_id, f'分镜{i+1} 图片问题: {", ".join(issues)}', 'warn')
-                # 沉淀反馈
-                with auto_tasks_lock:
-                    if task_id in auto_tasks:
-                        auto_tasks[task_id].setdefault('global_feedback', [])
-                        auto_tasks[task_id]['global_feedback'].append({
-                            'scene_index': i,
-                            'type': 'image',
-                            'score': img_score,
-                            'issues': issues,
-                            'suggestions': suggestions
-                        })
-            
-            # 单步模式：等待用户确认
-            if mode == 'step':
-                wait_for_user_confirmation(task_id, 'scene_image_done', {'scene_index': i, 'image_score': img_score})
-            
-            # 生成视频
-            _update_task_status(task_id, stage='video', stage_progress=0,
-                current_action=f'正在生成第{i+1}个分镜的视频...')
-            _add_task_log(task_id, f'分镜{i+1}: 生成视频')
-            
-            vid_result = _generate_video_backend(
-                scene.get('video_prompt', ''),
-                img_result.get('url', ''),
-                video_model,
-                api_key
-            )
-            
-            if vid_result.get('success'):
-                video_results.append(vid_result)
-                _add_task_log(task_id, f'分镜{i+1} 视频生成完成', 'success')
-            else:
-                _add_task_log(task_id, f'分镜{i+1} 视频生成失败: {vid_result.get("error")}', 'error')
-                video_results.append(vid_result)
-                scene_reviews.append({'overall_score': 0, 'comment': '视频生成失败'})
+            selected_image_obj = img_versions[selected_idx]
+            img_data = selected_image_obj.get('image')
+            if not img_data:
+                _add_task_log(task_id, f'分镜{i+1} 选中版本无图片，跳过视频生成', 'warn')
                 continue
             
-            # 单步模式：等待用户确认
-            if mode == 'step':
-                wait_for_user_confirmation(task_id, 'scene_video_done', {'scene_index': i})
+            image_url = img_data.get('url', '')
+            if video_model == 'r2v':
+                _add_task_log(task_id, f'分镜{i+1} r2v角色图: {char_image or "未选（将用首帧）"}')
             
-            # 视频评审
-            _update_task_status(task_id, stage='scene_review', stage_progress=0,
-                current_action=f'正在评审第{i+1}个分镜的视频...')
-            _add_task_log(task_id, f'分镜{i+1}: 视频评审')
+            video_prompt = scene.get('video_prompt', '')
             
-            vid_review = _review_video_backend(
-                f"http://localhost:5000{vid_result.get('url')}",
-                scene.get('video_prompt', ''),
-                api_key
-            )
-            scene_reviews.append(vid_review)
-            
-            vid_score = vid_review.get('overall_score', 0)
-            _add_task_log(task_id, f'分镜{i+1} 视频评审得分: {vid_score}/10')
-            
-            # 单步模式：等待用户反馈
-            if mode == 'step':
-                wait_for_user_confirmation(task_id, 'scene_review_done', {
-                    'scene_index': i,
-                    'score': vid_score,
-                    'comment': vid_review.get('comment', '')
-                })
-            
-            _update_task_status(task_id, stage_progress=100)
+            for v in range(max_versions):
+                version_num = v + 1
+                _add_task_log(task_id, f'--- 分镜{i+1} 视频版本 {version_num}/{max_versions} ---')
+                _update_task_status(task_id,
+                    stage_progress=int(100*(i*max_versions+v)/(len(scenes)*max_versions)),
+                    current_action=f'分镜{i+1} 视频生成 (版本{version_num})')
+                
+                _add_task_log(task_id, f'分镜{i+1}: 生成视频')
+                vid_result = _generate_video_backend(
+                    video_prompt, image_url, video_model, api_key,
+                    char_image_url=char_image
+                )
+                
+                video_version_obj = {
+                    'version': version_num,
+                    'video': vid_result if vid_result.get('success') else None,
+                    'video_error': vid_result.get('error') if not vid_result.get('success') else None,
+                    'video_review': None,
+                    'manual_review': None,
+                    'video_passed': False,
+                    'video_prompt_used': video_prompt,
+                    'based_on_image_version': selected_idx + 1,
+                }
+                
+                if not vid_result.get('success'):
+                    _add_task_log(task_id, f'分镜{i+1} 视频生成失败: {vid_result.get("error")}', 'error')
+                    scene_versions[str(i)]['videos'].append(video_version_obj)
+                    _update_task_status(task_id, scene_versions=scene_versions)
+                    if v < max_versions - 1:
+                        continue
+                    break
+                
+                _add_task_log(task_id, f'分镜{i+1} 视频生成完成 (版本{version_num})', 'success')
+                
+                # 视频评审
+                _add_task_log(task_id, f'分镜{i+1}: 视频评审')
+                vid_review = _review_video_backend(
+                    f"http://localhost:5000{vid_result.get('url', '')}",
+                    video_prompt, api_key
+                )
+                vid_score = vid_review.get('overall_score', 0)
+                _add_task_log(task_id, f'分镜{i+1} 视频评审得分: {vid_score}/10')
+                
+                video_version_obj['video_review'] = vid_review
+                video_version_obj['video_passed'] = (vid_score >= score_threshold)
+                scene_versions[str(i)]['videos'].append(video_version_obj)
+                _update_task_status(task_id, scene_versions=scene_versions)
+                
+                if vid_score >= score_threshold:
+                    _add_task_log(task_id, f'分镜{i+1} 视频达标 ({vid_score}/{score_threshold})', 'success')
+                    break
+                
+                if v == max_versions - 1:
+                    _add_task_log(task_id, f'分镜{i+1} 视频达到最大版本数，将使用最佳版本', 'warn')
+                    break
+                
+                # 修正视频提示词
+                _add_task_log(task_id, f'分镜{i+1} 视频未达标，修正视频提示词...', 'warn')
+                video_prompt = _refine_prompt_by_review(video_prompt, vid_review, 'video', api_key)
+                _add_task_log(task_id, f'分镜{i+1} 视频提示词已修正')
         
-        _update_task_status(task_id, total_progress=90)
-        
-        # === 阶段4: 完整视频评审（只给结论）===
-        _add_task_log(task_id, '\n========== 阶段4: 完整视频评审 ==========')
-        _update_task_status(task_id, stage='final_review', stage_progress=0,
-            current_action='正在评审完整视频...')
-        
-        # 简单计算平均分作为结论
-        valid_scores = [r.get('overall_score', 0) for r in scene_reviews if r.get('overall_score', 0) > 0]
-        avg_score = sum(valid_scores) / len(valid_scores) if valid_scores else 0
-        
-        final_review = {
-            'overall_score': avg_score,
-            'comment': f'完整视频由 {len(scenes)} 个分镜组成，平均得分 {avg_score:.1f}/10',
-            'scene_count': len(scenes),
-            'scene_reviews': scene_reviews
-        }
-        
-        _add_task_log(task_id, f'完整视频评审完成，平均得分: {avg_score:.1f}/10', 'success')
-        _update_task_status(task_id, stage_progress=100)
-        
-        # === 阶段5: 完成 ===
-        _update_task_status(task_id, stage='done', stage_progress=100, total_progress=100,
-            current_action='全部完成！', status='completed')
-        _add_task_log(task_id, '\n========== 全自动工作流完成！ ==========', 'success')
-        
-        result = {
-            'scenes': scenes,
-            'images': image_results,
-            'videos': video_results,
-            'scene_reviews': scene_reviews,
-            'final_review': final_review,
-            'global_feedback': auto_tasks.get(task_id, {}).get('global_feedback', [])
-        }
-        
-        _update_task_status(task_id, result=result)
+        # ====== 工作流完成 ======
+        _update_task_status(task_id,
+            stage='done', stage_progress=100, total_progress=100,
+            current_action='全部完成！',
+            status='completed',
+            scene_versions=scene_versions,
+            result={
+                'scenes': scenes,
+                'scene_versions': scene_versions,
+            }
+        )
+        _add_task_log(task_id, '全自动工作流完成！', 'success')
         
     except Exception as e:
         print(f"[工作流 {task_id}] 异常: {str(e)}")
@@ -2887,6 +3016,7 @@ def run_auto_workflow(task_id, params):
         _add_task_log(task_id, traceback.format_exc(), 'error')
 
 
+# ==================== 全自动控制 API ====================
 # ==================== 全自动控制 API ====================
 
 @app.route('/api/auto-control/<task_id>', methods=['POST'])
@@ -3029,21 +3159,20 @@ def api_auto_workflow():
         
         task_id = uuid.uuid4().hex[:12]
         
-        # 初始化任务状态（移除全局characters）
         with auto_tasks_lock:
             auto_tasks[task_id] = {
                 'task_id': task_id,
                 'status': 'pending',
                 'stage': 'init',
-                'mode': data.get('mode', 'auto'),  # 'auto' or 'step'
                 'stage_progress': 0,
                 'total_progress': 0,
                 'current_action': '正在初始化...',
                 'logs': [],
                 'result': None,
                 'scenes': [],
-                'scene_characters': {},  # 每个分镜的人物选择
-                'global_feedback': [],  # 全局反馈沉淀
+                'scene_characters': {},       # 分镜人物选择
+                'scene_versions': {},         # 分镜版本追踪 {'0': {'images':[], 'videos':[], ...}}
+                'global_feedback': [],
                 'current_scene_index': 0,
                 'waiting_for_user': False,
                 'user_action_required': None,
@@ -3069,13 +3198,12 @@ def api_auto_workflow():
 
 @app.route('/api/auto-status/<task_id>', methods=['GET'])
 def api_auto_status(task_id):
-    """查询全自动任务状态"""
+    """查询全自动任务状态（包含分镜版本追踪）"""
     with auto_tasks_lock:
         task = auto_tasks.get(task_id)
         if not task:
             return jsonify({'success': False, 'error': '任务不存在'})
         
-        # 返回任务状态（不包含完整结果，减少传输量）
         return jsonify({
             'success': True,
             'task_id': task['task_id'],
@@ -3085,8 +3213,124 @@ def api_auto_status(task_id):
             'total_progress': task['total_progress'],
             'current_action': task['current_action'],
             'logs': task['logs'],
+            'scenes': task.get('scenes', []),
+            'scene_versions': task.get('scene_versions', {}),
+            'waiting_for_user': task.get('waiting_for_user', False),
+            'user_action_required': task.get('user_action_required'),
             'result': task['result'] if task['status'] == 'completed' else None
         })
+
+
+@app.route('/api/auto-manual-review/<task_id>', methods=['POST'])
+def api_auto_manual_review(task_id):
+    """手动设置某个版本的评审结果（覆盖自动评审）"""
+    try:
+        data = request.get_json()
+        scene_index = str(data.get('scene_index', 0))
+        version_idx = int(data.get('version_idx', 0))
+        review_type = data.get('type', 'image')  # 'image' or 'video'
+        score = int(data.get('score', 7))
+        comment = data.get('comment', '')
+        improvements = data.get('improvements', [])
+        score_threshold = int(data.get('score_threshold', 7))
+        
+        manual_review = {
+            'overall_score': score,
+            'comment': comment,
+            'improvements': improvements,
+            'manual': True
+        }
+        key = 'images' if review_type == 'image' else 'videos'
+        passed_key = 'image_passed' if review_type == 'image' else 'video_passed'
+        
+        with auto_tasks_lock:
+            task = auto_tasks.get(task_id)
+            if not task:
+                return jsonify({'success': False, 'error': '任务不存在'})
+            sv = task.get('scene_versions', {}).get(scene_index)
+            if not sv:
+                return jsonify({'success': False, 'error': '分镜不存在'})
+            versions_list = sv.get(key, [])
+            if version_idx >= len(versions_list):
+                return jsonify({'success': False, 'error': '版本不存在'})
+            versions_list[version_idx]['manual_review'] = manual_review
+            versions_list[version_idx][passed_key] = (score >= score_threshold)
+            # 图片评审：更新最优版本选择
+            if review_type == 'image':
+                def _get_score(vv):
+                    mr = vv.get('manual_review')
+                    if mr:
+                        return mr.get('overall_score', 0)
+                    ir = vv.get('image_review')
+                    return ir.get('overall_score', 0) if ir else 0
+                best_score = max((_get_score(vv) for vv in versions_list), default=0)
+                best_idx = next((j for j, vv in enumerate(versions_list) if _get_score(vv) == best_score), 0)
+                sv['selected_image_idx'] = best_idx
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/auto-select-image/<task_id>', methods=['POST'])
+def api_auto_select_image(task_id):
+    """手动选择某个分镜使用哪个图片版本"""
+    try:
+        data = request.get_json()
+        scene_index = str(data.get('scene_index', 0))
+        version_idx = int(data.get('version_idx', 0))
+        
+        with auto_tasks_lock:
+            task = auto_tasks.get(task_id)
+            if not task:
+                return jsonify({'success': False, 'error': '任务不存在'})
+            sv = task.get('scene_versions', {}).get(scene_index)
+            if sv is None:
+                return jsonify({'success': False, 'error': '分镜不存在'})
+            sv['selected_image_idx'] = version_idx
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/auto-set-char-image/<task_id>', methods=['POST'])
+def api_auto_set_char_image(task_id):
+    """设置r2v模式的角色参考图"""
+    try:
+        data = request.get_json()
+        scene_index = str(data.get('scene_index', 0))
+        char_image_url = data.get('char_image_url', '')
+        
+        with auto_tasks_lock:
+            task = auto_tasks.get(task_id)
+            if not task:
+                return jsonify({'success': False, 'error': '任务不存在'})
+            sv = task.get('scene_versions', {}).get(scene_index)
+            if sv is not None:
+                sv['char_image'] = char_image_url if char_image_url else None
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/auto-start-videos/<task_id>', methods=['POST'])
+def api_auto_start_videos(task_id):
+    """图片阶段完成后，触发视频生成阶段（将状态改回 running）"""
+    try:
+        with auto_tasks_lock:
+            task = auto_tasks.get(task_id)
+            if not task:
+                return jsonify({'success': False, 'error': '任务不存在'})
+            if task.get('stage') != 'images_done':
+                return jsonify({'success': False, 'error': f'当前阶段不是 images_done: {task.get("stage")}'})
+            task['status'] = 'running'
+            task['waiting_for_user'] = False
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':

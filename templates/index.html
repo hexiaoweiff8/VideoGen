@@ -805,6 +805,25 @@
                     </div>
                 </div>
 
+                <!-- 图片阶段完成，等待用户确认 -->
+                <div class="card" id="auto-images-done-bar" style="display:none;background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:1.5px solid #10b981;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                        <div>
+                            <div style="font-size:16px;font-weight:700;color:#065f46;">✅ 所有分镜图片生成完成！</div>
+                            <div style="font-size:13px;color:#047857;margin-top:4px;">请查看下方各版本图片，可手动修改评审、选择版本、设置角色图，满意后点击按钮继续生成视频。</div>
+                        </div>
+                        <button class="btn btn-primary" onclick="startVideos()" id="btn-start-videos" style="white-space:nowrap;">
+                            🎬 开始生成视频
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 分镜版本展示区 -->
+                <div id="auto-scene-versions-section" style="display:none;">
+                    <h3 style="margin:20px 0 12px;font-size:16px;">🎞️ 分镜生成进度</h3>
+                    <div id="auto-scene-versions-list"></div>
+                </div>
+
                 <!-- 结果展示区 -->
                 <div class="auto-result-section" id="auto-result-section" style="display:none;">
                     <!-- 分镜结果 -->
