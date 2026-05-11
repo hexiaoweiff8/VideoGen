@@ -730,6 +730,21 @@
                         </div>
                     </div>
 
+                    <div class="storyboard-options">
+                        <div class="form-group" style="flex:1">
+                            <label for="auto-video-resolution">视频分辨率</label>
+                            <select id="auto-video-resolution">
+                                <option value="720P">720P</option>
+                                <option value="1080P">1080P</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:1">
+                            <label for="auto-negative-prompt">反向提示词（可选）</label>
+                            <input type="text" id="auto-negative-prompt" placeholder="如：模糊、变形、多指" value="">
+                            <span class="hint">用于图片和视频生成，避免常见质量问题</span>
+                        </div>
+                    </div>
+
                     <button class="btn btn-primary" onclick="startAutoWorkflow()" id="btn-start-auto">
                         🚀 开始全自动流程
                     </button>
@@ -769,9 +784,10 @@
                         <span class="stage-badge stage-storyboard" data-stage="storyboard">① 分镜生成</span>
                         <span class="stage-badge stage-review" data-stage="review">② 分镜评审</span>
                         <span class="stage-badge stage-image" data-stage="image">③ 图片生成</span>
-                        <span class="stage-badge stage-video" data-stage="video">④ 视频生成</span>
-                        <span class="stage-badge stage-final-review" data-stage="final_review">⑤ 最终评审</span>
-                        <span class="stage-badge stage-done" data-stage="done">⑥ 完成</span>
+                        <span class="stage-badge stage-image-global" data-stage="image_global_review">④ 图片一致性</span>
+                        <span class="stage-badge stage-video" data-stage="video">⑤ 视频生成</span>
+                        <span class="stage-badge stage-final-review" data-stage="final_review">⑥ 最终评审</span>
+                        <span class="stage-badge stage-done" data-stage="done">⑦ 完成</span>
                     </div>
 
                     <!-- 阶段进度条 -->
@@ -814,6 +830,19 @@
                         </div>
                         <button class="btn btn-primary" onclick="startVideos()" id="btn-start-videos" style="white-space:nowrap;">
                             🎬 开始生成视频
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 视频阶段完成，等待用户确认 -->
+                <div class="card" id="auto-videos-done-bar" style="display:none;background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:1.5px solid #10b981;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                        <div>
+                            <div style="font-size:16px;font-weight:700;color:#065f46;">🎬 所有分镜视频生成完成！</div>
+                            <div style="font-size:13px;color:#047857;margin-top:4px;">请预览各版本视频，可手动修改评审，满意后点击完成按钮。</div>
+                        </div>
+                        <button class="btn btn-primary" onclick="finishAutoWorkflow()" id="btn-finish-workflow" style="white-space:nowrap;">
+                            ✅ 完成
                         </button>
                     </div>
                 </div>

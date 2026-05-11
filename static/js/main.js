@@ -2265,6 +2265,8 @@ async function startAutoWorkflow() {
     const videoModel = document.getElementById('auto-video-model').value;
     const scoreThreshold = parseInt(document.getElementById('auto-score-threshold').value) || 7;
     const maxCycles = parseInt(document.getElementById('auto-max-cycles').value) || 3;
+    const videoResolution = document.getElementById('auto-video-resolution').value;
+    const negativePrompt = document.getElementById('auto-negative-prompt').value.trim();
     
     // 重置状态
     autoScenesData = [];
@@ -2298,6 +2300,8 @@ async function startAutoWorkflow() {
                 description, style, num_scenes: numScenes,
                 image_model: imageModel, video_model: videoModel,
                 score_threshold: scoreThreshold, max_cycles: maxCycles,
+                video_resolution: videoResolution,
+                negative_prompt: negativePrompt,
                 mode: autoWorkflowMode,
                 api_key: apiCfg.image.api_key || ''
             })
@@ -2379,12 +2383,22 @@ function pollAutoStatus() {
                 document.getElementById('auto-images-done-bar').style.display = 'none';
             }
             
+            // 视频阶段完成，等待用户
+            if (data.stage === 'videos_done' && data.waiting_for_user) {
+                document.getElementById('auto-videos-done-bar').style.display = 'block';
+                document.getElementById('btn-auto-pause').style.display = 'none';
+                document.getElementById('btn-auto-resume').style.display = 'none';
+            } else if (data.stage !== 'videos_done') {
+                document.getElementById('auto-videos-done-bar').style.display = 'none';
+            }
+            
             // 检查完成
             if (data.status === 'completed') {
                 clearInterval(autoPollTimer);
                 renderFinalResults(data.result);
                 resetAutoControls();
                 document.getElementById('auto-images-done-bar').style.display = 'none';
+                document.getElementById('auto-videos-done-bar').style.display = 'none';
                 showToast('全自动流程完成！', 'success');
             } else if (data.status === 'failed') {
                 clearInterval(autoPollTimer);
@@ -2409,7 +2423,7 @@ function updateAutoProgress(stage, stageProgress, totalProgress, action) {
         if (badgeStage === stage) {
             badge.classList.add('active');
         } else {
-            const stages = ['storyboard', 'review', 'image', 'video', 'final_review', 'done'];
+            const stages = ['storyboard', 'review', 'image', 'image_global_review', 'video', 'videos_done', 'final_review', 'done'];
             const currentIndex = stages.indexOf(stage);
             const badgeIndex = stages.indexOf(badgeStage);
             if (badgeIndex < currentIndex) {
@@ -2905,6 +2919,38 @@ async function startVideos() {
     } catch (e) {
         showToast('请求异常', 'error');
         if (btn) { btn.disabled = false; btn.textContent = '🎬 开始生成视频'; }
+    }
+}
+
+/**
+ * 完成全自动工作流（视频阶段确认后触发）
+ */
+async function finishAutoWorkflow() {
+    if (!autoTaskId) return;
+    const btn = document.getElementById('btn-finish-workflow');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '正在完成...';
+    }
+    try {
+        const resp = await fetch(`/api/auto-control/${autoTaskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'resume' })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            document.getElementById('auto-videos-done-bar').style.display = 'none';
+            document.getElementById('btn-auto-pause').style.display = 'inline-block';
+            document.getElementById('btn-auto-stop').style.display = 'inline-block';
+            showToast('正在生成最终评审汇总...', 'success');
+        } else {
+            showToast('操作失败: ' + data.error, 'error');
+            if (btn) { btn.disabled = false; btn.textContent = '✅ 完成'; }
+        }
+    } catch (e) {
+        showToast('请求异常', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '✅ 完成'; }
     }
 }
 
